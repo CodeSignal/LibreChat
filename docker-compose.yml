@@ -11,8 +11,7 @@ services:
       - rag_api
     build:
       context: .
-      dockerfile: Dockerfile.multi
-      target: api-build
+      target: node
     restart: always
     user: "${UID}:${GID}"
     extra_hosts:
