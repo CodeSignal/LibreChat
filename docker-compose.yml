@@ -9,7 +9,10 @@ services:
     depends_on:
       - mongodb
       - rag_api
-    image: ghcr.io/codesignal/librechat-api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.multi
+      target: api-build
     restart: always
     user: "${UID}:${GID}"
     extra_hosts:
