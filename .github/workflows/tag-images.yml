@@ -49,7 +49,7 @@ jobs:
           file: ${{ matrix.file }}
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}:latest
+            ghcr.io/codesignal/${{ matrix.image_name }}:${{ github.ref_name }}
+            ghcr.io/codesignal/${{ matrix.image_name }}:latest
           platforms: linux/amd64
           target: ${{ matrix.target }}
