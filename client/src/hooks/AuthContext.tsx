@@ -10,7 +10,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useRecoilState } from 'recoil';
 import { setTokenHeader, SystemRoles } from 'librechat-data-provider';
-import { useGetStartupConfig } from 'librechat-data-provider/react-query';
+import { useGetStartupConfig } from '~/data-provider';
 import type * as t from 'librechat-data-provider';
 import {
   useGetRole,
