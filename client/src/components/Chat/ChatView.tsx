@@ -1,7 +1,7 @@
 import { memo, useCallback } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useGetMessagesByConvoId } from 'librechat-data-provider/react-query';
 import type { TMessage } from 'librechat-data-provider';
 import type { ChatFormValues } from '~/common';
@@ -19,10 +19,12 @@ import store from '~/store';
 
 function ChatView({ index = 0 }: { index?: number }) {
   const { conversationId } = useParams();
+  const [searchParams] = useSearchParams();
   const rootSubmission = useRecoilValue(store.submissionByIndex(index));
   const addedSubmission = useRecoilValue(store.submissionByIndex(index + 1));
 
   const fileMap = useFileMapContext();
+  const initialMessage = searchParams.get('initialMessage');
 
   const { data: messagesTree = null, isLoading } = useGetMessagesByConvoId(conversationId ?? '', {
     select: useCallback(
@@ -65,7 +67,7 @@ function ChatView({ index = 0 }: { index?: number }) {
           <Presentation>
             {content}
             <div className="w-full border-t-0 pl-0 pt-2 dark:border-white/20 md:w-[calc(100%-.5rem)] md:border-t-0 md:border-transparent md:pl-0 md:pt-0 md:dark:border-transparent">
-              <ChatForm index={index} />
+              <ChatForm index={index} initialMessage={initialMessage} />
               <Footer />
             </div>
           </Presentation>

@@ -36,7 +36,7 @@ import SendButton from './SendButton';
 import Mention from './Mention';
 import store from '~/store';
 
-const ChatForm = ({ index = 0 }) => {
+const ChatForm = ({ index = 0, initialMessage = '' }: { index?: number; initialMessage?: string | null }) => {
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   useQueryParams({ textAreaRef });
@@ -129,6 +129,12 @@ const ChatForm = ({ index = 0 }) => {
       methods.setValue('text', e.target.value, { shouldValidate: true });
     },
   });
+
+  useEffect(() => {
+    if (initialMessage) {
+      methods.setValue('text', initialMessage);
+    }
+  }, [initialMessage, methods]);
 
   useEffect(() => {
     if (!isSearching && textAreaRef.current && !disableInputs) {
