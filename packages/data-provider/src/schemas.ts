@@ -24,8 +24,6 @@ export enum EModelEndpoint {
   custom = 'custom',
   bedrock = 'bedrock',
   /** @deprecated */
-  bingAI = 'bingAI',
-  /** @deprecated */
   chatGPTBrowser = 'chatGPTBrowser',
   /** @deprecated */
   gptPlugins = 'gptPlugins',
@@ -110,6 +108,12 @@ export enum ImageDetail {
   high = 'high',
 }
 
+export enum ReasoningEffort {
+  low = 'low',
+  medium = 'medium',
+  high = 'high',
+}
+
 export const imageDetailNumeric = {
   [ImageDetail.low]: 0,
   [ImageDetail.auto]: 1,
@@ -123,6 +127,7 @@ export const imageDetailValue = {
 };
 
 export const eImageDetailSchema = z.nativeEnum(ImageDetail);
+export const eReasoningEffortSchema = z.nativeEnum(ReasoningEffort);
 
 export const defaultAssistantFormValues = {
   assistant: '',
@@ -150,6 +155,7 @@ export const defaultAgentFormValues = {
   tools: [],
   provider: {},
   projectIds: [],
+  artifacts: '',
   isCollaborative: false,
   [Tools.execute_code]: false,
   [Tools.file_search]: false,
@@ -381,6 +387,7 @@ export const tPluginSchema = z.object({
   authConfig: z.array(tPluginAuthConfigSchema).optional(),
   authenticated: z.boolean().optional(),
   isButton: z.boolean().optional(),
+  toolkit: z.boolean().optional(),
 });
 
 export type TPlugin = z.infer<typeof tPluginSchema>;
@@ -457,7 +464,6 @@ export const tMessageSchema = z.object({
   sender: z.string().optional(),
   text: z.string(),
   generation: z.string().nullable().optional(),
-  isEdited: z.boolean().optional(),
   isCreatedByUser: z.boolean(),
   error: z.boolean().optional(),
   clientTimestamp: z.string().optional(),
@@ -564,6 +570,8 @@ export const tConversationSchema = z.object({
   file_ids: z.array(z.string()).optional(),
   /* vision */
   imageDetail: eImageDetailSchema.optional(),
+  /* OpenAI: o1 only */
+  reasoning_effort: eReasoningEffortSchema.optional(),
   /* assistant */
   assistant_id: z.string().optional(),
   /* agents */
@@ -583,25 +591,8 @@ export const tConversationSchema = z.object({
   greeting: z.string().optional(),
   spec: z.string().nullable().optional(),
   iconURL: z.string().nullable().optional(),
-  /*
-  Deprecated fields
-  */
-  /** @deprecated */
-  suggestions: z.array(z.string()).optional(),
-  /** @deprecated */
-  systemMessage: z.string().nullable().optional(),
-  /** @deprecated */
-  jailbreak: z.boolean().optional(),
-  /** @deprecated */
-  jailbreakConversationId: z.string().nullable().optional(),
-  /** @deprecated */
-  conversationSignature: z.string().nullable().optional(),
-  /** @deprecated */
-  clientId: z.string().nullable().optional(),
-  /** @deprecated */
-  invocationId: z.number().nullable().optional(),
-  /** @deprecated */
-  toneStyle: z.string().nullable().optional(),
+  /* temporary chat */
+  expiredAt: z.string().nullable().optional(),
   /** @deprecated */
   resendImages: z.boolean().optional(),
   /** @deprecated */
@@ -807,41 +798,6 @@ export const googleGenConfigSchema = z
   .strip()
   .optional();
 
-export const bingAISchema = tConversationSchema
-  .pick({
-    jailbreak: true,
-    systemMessage: true,
-    context: true,
-    toneStyle: true,
-    jailbreakConversationId: true,
-    conversationSignature: true,
-    clientId: true,
-    invocationId: true,
-  })
-  .transform((obj) => ({
-    ...obj,
-    model: '',
-    jailbreak: obj.jailbreak ?? false,
-    systemMessage: obj.systemMessage ?? null,
-    context: obj.context ?? null,
-    toneStyle: obj.toneStyle ?? 'creative',
-    jailbreakConversationId: obj.jailbreakConversationId ?? null,
-    conversationSignature: obj.conversationSignature ?? null,
-    clientId: obj.clientId ?? null,
-    invocationId: obj.invocationId ?? 1,
-  }))
-  .catch(() => ({
-    model: '',
-    jailbreak: false,
-    systemMessage: null,
-    context: null,
-    toneStyle: 'creative',
-    jailbreakConversationId: null,
-    conversationSignature: null,
-    clientId: null,
-    invocationId: 1,
-  }));
-
 export const chatGPTBrowserSchema = tConversationSchema
   .pick({
     model: true,
@@ -922,12 +878,18 @@ export const gptPluginsSchema = tConversationSchema
     maxContextTokens: undefined,
   }));
 
-export function removeNullishValues<T extends Record<string, unknown>>(obj: T): Partial<T> {
+export function removeNullishValues<T extends Record<string, unknown>>(
+  obj: T,
+  removeEmptyStrings?: boolean,
+): Partial<T> {
   const newObj: Partial<T> = { ...obj };
 
   (Object.keys(newObj) as Array<keyof T>).forEach((key) => {
     const value = newObj[key];
     if (value === undefined || value === null) {
+      delete newObj[key];
+    }
+    if (removeEmptyStrings && typeof value === 'string' && value === '') {
       delete newObj[key];
     }
   });
@@ -980,8 +942,7 @@ export const compactAssistantSchema = tConversationSchema
     greeting: true,
     spec: true,
   })
-  // will change after adding temperature
-  .transform(removeNullishValues)
+  .transform((obj) => removeNullishValues(obj))
   .catch(() => ({}));
 
 export const agentsSchema = tConversationSchema
@@ -1055,6 +1016,7 @@ export const openAISchema = tConversationSchema
     spec: true,
     maxContextTokens: true,
     max_tokens: true,
+    reasoning_effort: true,
   })
   .transform((obj: Partial<TConversation>) => removeNullishValues(obj))
   .catch(() => ({}));
@@ -1182,7 +1144,7 @@ export const compactPluginsSchema = tConversationSchema
   })
   .catch(() => ({}));
 
-const tBannerSchema = z.object({
+export const tBannerSchema = z.object({
   bannerId: z.string(),
   message: z.string(),
   displayFrom: z.string(),
@@ -1204,5 +1166,5 @@ export const compactAgentsSchema = tConversationSchema
     instructions: true,
     additional_instructions: true,
   })
-  .transform(removeNullishValues)
+  .transform((obj) => removeNullishValues(obj))
   .catch(() => ({}));
