@@ -7,7 +7,7 @@ import {
   useCallback,
   createContext,
 } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { NavigateOptions, useNavigate } from 'react-router-dom';
 import { useRecoilState } from 'recoil';
 import { setTokenHeader, SystemRoles } from 'librechat-data-provider';
 import { useGetStartupConfig } from '~/data-provider';
@@ -46,6 +46,15 @@ const AuthContextProvider = ({
   const { data: startupConfig = null } = useGetStartupConfig();
   
   const navigate = useNavigate();
+  const navigateToLogin = useCallback((options?: NavigateOptions) => {
+    const currentPath = document.location.pathname + document.location.search;
+    let loginPath = "/login";
+    if (!currentPath.startsWith('/login')) {
+      loginPath = `/login?redirect=${encodeURIComponent(currentPath)}`;
+    }
+
+    navigate(loginPath, options);
+  }, [navigate]);
 
   const setUserContext = useCallback(
     (userContext: TUserContext) => {
@@ -75,12 +84,14 @@ const AuthContextProvider = ({
     onSuccess: (data: t.TLoginResponse) => {
       const { user, token } = data;
       setError(undefined);
-      setUserContext({ token, isAuthenticated: true, user, redirect: '/c/new' });
+
+      const redirect = document.location.search ? document.location.search.split('redirect=')[1] : '/c/new';
+      setUserContext({ token, isAuthenticated: true, user, redirect: decodeURIComponent(redirect) });
     },
     onError: (error: TResError | unknown) => {
       const resError = error as TResError;
       doSetError(resError.message);
-      navigate('/login', { replace: true });
+      navigateToLogin({ replace: true });
     },
   });
   const logoutUser = useLogoutUserMutation({
@@ -126,7 +137,7 @@ const AuthContextProvider = ({
           if (authConfig?.test === true) {
             return;
           }
-          navigate('/login');
+          navigateToLogin();
         }
       },
       onError: (error) => {
@@ -134,7 +145,7 @@ const AuthContextProvider = ({
         if (authConfig?.test === true) {
           return;
         }
-        navigate('/login');
+        navigateToLogin();
       },
     });
   }, []);
@@ -154,7 +165,7 @@ const AuthContextProvider = ({
       setUser(userQuery.data);
     } else if (userQuery.isError) {
       doSetError((userQuery.error as Error).message);
-      navigate('/login', { replace: true });
+      navigateToLogin({replace: true});
     }
     if (error != null && error && isAuthenticated) {
       doSetError(undefined);

@@ -9,7 +9,13 @@ export default function useAuthRedirect() {
   useEffect(() => {
     const timeout = setTimeout(() => {
       if (!isAuthenticated) {
-        navigate('/login', { replace: true });
+        const currentPath = document.location.pathname + document.location.search;
+        let loginPath = "/login";
+        if (!currentPath.startsWith('/login')) {
+          loginPath = `/login?redirect=${encodeURIComponent(currentPath)}`;
+        }
+
+        navigate(loginPath, { replace: true });
       }
     }, 300);
 
