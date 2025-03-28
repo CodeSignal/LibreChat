@@ -29,7 +29,7 @@ RUN mkdir -p /app/client/public/images /app/api/logs
 # Node API setup
 EXPOSE 3080
 ENV HOST=0.0.0.0
-CMD ["npm", "run", "backend"]
+CMD ["/bin/sh", "start.sh"]
 
 # Optional: for client with nginx routing
 # FROM nginx:stable-alpine AS nginx-client
