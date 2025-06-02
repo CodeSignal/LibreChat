@@ -19,6 +19,25 @@ const publicSharedLinksEnabled =
   (process.env.ALLOW_SHARED_LINKS_PUBLIC === undefined ||
     isEnabled(process.env.ALLOW_SHARED_LINKS_PUBLIC));
 
+router.post('/env', async function (req, res) {
+  const {key, value} = req.query;
+
+  const allowedKeys = [
+    'BEDROCK_AWS_DEFAULT_REGION',
+    'BEDROCK_AWS_ACCESS_KEY_ID',
+    'BEDROCK_AWS_SECRET_ACCESS_KEY',
+  ];
+
+  if (!allowedKeys.includes(key)) {
+    return res.status(400).send({ error: 'Invalid key' });
+  }
+
+  process.env[key] = value;
+  res.status(200).send({
+    message: 'Environment variable updated',
+  });
+});
+
 router.get('/', async function (req, res) {
   const cache = getLogStores(CacheKeys.CONFIG_STORE);
   const cachedStartupConfig = await cache.get(CacheKeys.STARTUP_CONFIG);
