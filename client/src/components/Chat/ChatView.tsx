@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -6,7 +6,7 @@ import { Constants } from 'librechat-data-provider';
 import type { TMessage } from 'librechat-data-provider';
 import type { ChatFormValues } from '~/common';
 import { ChatContext, AddedChatContext, useFileMapContext, ChatFormProvider } from '~/Providers';
-import { useChatHelpers, useAddedResponse, useSSE } from '~/hooks';
+import { useChatHelpers, useAddedResponse, useSSE, usePresets } from '~/hooks';
 import ConversationStarters from './Input/ConversationStarters';
 //import { useGetMessagesByConvoId } from 'librechat-data-provider/react-query';
 import { useGetMessagesByConvoId } from '~/data-provider';
@@ -36,10 +36,22 @@ function ChatView({ index = 0 }: { index?: number }) {
   const rootSubmission = useRecoilValue(store.submissionByIndex(index));
   const addedSubmission = useRecoilValue(store.submissionByIndex(index + 1));
   const centerFormOnLanding = useRecoilValue(store.centerFormOnLanding);
+  const {presetsQuery, onSelectPreset} = usePresets();
 
   const fileMap = useFileMapContext();
   const initialMessage = searchParams.get('initialMessage');
+  const usePresetId = searchParams.get('usePresetId');
 
+  useEffect(() => {
+    if (usePresetId) {
+      const preset = (presetsQuery.data ?? []).find(p => p.presetId == usePresetId)
+      if (preset) {
+        onSelectPreset(preset);
+        searchParams.delete('usePresetId');
+      }
+    }
+  }, [usePresetId, presetsQuery.data, onSelectPreset])
+  
   const { data: messagesTree = null, isLoading } = useGetMessagesByConvoId(conversationId ?? '', {
     select: useCallback(
       (data: TMessage[]) => {
