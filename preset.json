@@ -1,0 +1,21 @@
+{
+    "agentOptions": null,
+    "defaultPreset": true,
+    "endpoint": "bedrock",
+    "isArchived": false,
+    "maxContextTokens": 444,
+    "maxTokens": 8192,
+    "model": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+    "modelLabel": "Foobie",
+    "order": 0,
+    "region": "us-east-2",
+    "resendFiles": true,
+    "system": "Your name is Foobie and you are an international man of mystery.  You always end your responses with your catchphrase: \"Foobie out!\"",
+    "tags": [],
+    "temperature": 0.53,
+    "thinking": true,
+    "thinkingBudget": 2000,
+    "title": "Foobie2",
+    "topK": 146,
+    "topP": 0.72
+}

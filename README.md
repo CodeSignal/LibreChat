@@ -7,6 +7,17 @@
   </h1>
 </p>
 
+<p>
+This is a fork of <a href="https://github.com/danny-avila/LibreChat">LibreChat</a> 0.7.8 with modifications added to support use in our environment.  If you re-base to a new version, be sure to check that all these features still work.
+
+<ul>
+  <li><strong>Automatic login</strong> -- via DEFAULT_LOGIN_USER and DEFAULT_LOGIN_PASSWORD .env variables</li>
+  <li><strong>Set env variables via rest</strong> -- via /api/config/env</li>
+  <li><strong>Create a new chat with an initial message</strong> -- via /c/new?initialMessage=Hello</li>
+  <li><strong>Create a new chat with a preset</strong> -- via /c/new?usePresetId=ABC-123-123ABC</li>
+</ul>
+</p>
+
 <p align="center">
   <a href="https://discord.librechat.ai"> 
     <img
