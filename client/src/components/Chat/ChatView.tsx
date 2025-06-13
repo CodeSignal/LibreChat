@@ -39,7 +39,7 @@ function ChatView({ index = 0 }: { index?: number }) {
   const {presetsQuery, onSelectPreset} = usePresets();
 
   const fileMap = useFileMapContext();
-  const initialMessage = searchParams.get('initialMessage');
+  const initialMessageFromUrl = searchParams.get('initialMessage');
   const usePresetId = searchParams.get('usePresetId');
 
   useEffect(() => {
@@ -50,7 +50,13 @@ function ChatView({ index = 0 }: { index?: number }) {
         searchParams.delete('usePresetId');
       }
     }
-  }, [usePresetId, presetsQuery.data, onSelectPreset])
+  }, [usePresetId, presetsQuery.data, onSelectPreset]);
+
+  useEffect(() => {
+    if (initialMessageFromUrl) {
+      localStorage.setItem('initialMessage', initialMessageFromUrl);
+    }
+  }, [initialMessageFromUrl]);
   
   const { data: messagesTree = null, isLoading } = useGetMessagesByConvoId(conversationId ?? '', {
     select: useCallback(
@@ -65,6 +71,11 @@ function ChatView({ index = 0 }: { index?: number }) {
 
   const chatHelpers = useChatHelpers(index, conversationId);
   const addedChatHelpers = useAddedResponse({ rootIndex: index });
+  const initialMessage = localStorage.getItem('initialMessage');
+
+  if (initialMessage && chatHelpers.isSubmitting) {
+    localStorage.removeItem('initialMessage');
+  }
 
   useSSE(rootSubmission, chatHelpers, false);
   useSSE(addedSubmission, addedChatHelpers, true);

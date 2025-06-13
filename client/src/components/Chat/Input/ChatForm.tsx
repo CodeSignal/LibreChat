@@ -129,11 +129,9 @@ const ChatForm = memo(({ index = 0, initialMessage = ''  }: { index?: number; in
     isSubmitting: isSubmitting || isSubmittingAdded,
   });
 
-  useEffect(() => {
-    if (initialMessage) {
-      methods.setValue('text', initialMessage);
-    }
-  }, [initialMessage, methods]);
+  if (initialMessage && methods.getValues('text') === '') {
+    methods.setValue('text', initialMessage);
+  }
 
   const { submitMessage, submitPrompt } = useSubmitMessage();
 
