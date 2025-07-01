@@ -1,11 +1,11 @@
-import React, { useState, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import React, { useState, useMemo, useCallback } from 'react';
 import { Controller, useWatch, useFormContext } from 'react-hook-form';
 import { QueryKeys, EModelEndpoint, AgentCapabilities } from 'librechat-data-provider';
 import type { TPlugin } from 'librechat-data-provider';
-import type { AgentForm, AgentPanelProps, IconComponentTypes } from '~/common';
 import { cn, defaultTextProps, removeFocusOutlines, getEndpointField, getIconKey } from '~/utils';
-import { useToastContext, useFileMapContext } from '~/Providers';
+import { useToastContext, useFileMapContext, useAgentPanelContext } from '~/Providers';
+import type { AgentForm, AgentPanelProps, IconComponentTypes } from '~/common';
 import Action from '~/components/SidePanel/Builder/Action';
 import { ToolSelectDialog } from '~/components/Tools';
 import { icons } from '~/hooks/Endpoint/Icons';
@@ -13,7 +13,9 @@ import { processAgentOption } from '~/utils';
 import Instructions from './Instructions';
 import AgentAvatar from './AgentAvatar';
 import FileContext from './FileContext';
+import SearchForm from './Search/Form';
 import { useLocalize } from '~/hooks';
+import MCPSection from './MCPSection';
 import FileSearch from './FileSearch';
 import Artifacts from './Artifacts';
 import AgentTool from './AgentTool';
@@ -28,23 +30,19 @@ const inputClass = cn(
 );
 
 export default function AgentConfig({
-  setAction,
-  actions = [],
   agentsConfig,
   createMutation,
-  setActivePanel,
   endpointsConfig,
-}: AgentPanelProps) {
+}: Pick<AgentPanelProps, 'agentsConfig' | 'createMutation' | 'endpointsConfig'>) {
+  const localize = useLocalize();
   const fileMap = useFileMapContext();
   const queryClient = useQueryClient();
+  const { showToast } = useToastContext();
+  const methods = useFormContext<AgentForm>();
+  const [showToolDialog, setShowToolDialog] = useState(false);
+  const { actions, setAction, setActivePanel } = useAgentPanelContext();
 
   const allTools = queryClient.getQueryData<TPlugin[]>([QueryKeys.tools]) ?? [];
-  const { showToast } = useToastContext();
-  const localize = useLocalize();
-
-  const [showToolDialog, setShowToolDialog] = useState(false);
-
-  const methods = useFormContext<AgentForm>();
 
   const { control } = methods;
   const provider = useWatch({ control, name: 'provider' });
@@ -71,6 +69,10 @@ export default function AgentConfig({
   );
   const fileSearchEnabled = useMemo(
     () => agentsConfig?.capabilities?.includes(AgentCapabilities.file_search) ?? false,
+    [agentsConfig],
+  );
+  const webSearchEnabled = useMemo(
+    () => agentsConfig?.capabilities?.includes(AgentCapabilities.web_search) ?? false,
     [agentsConfig],
   );
   const codeEnabled = useMemo(
@@ -257,13 +259,19 @@ export default function AgentConfig({
             </div>
           </button>
         </div>
-        {(codeEnabled || fileSearchEnabled || artifactsEnabled || ocrEnabled) && (
+        {(codeEnabled ||
+          fileSearchEnabled ||
+          artifactsEnabled ||
+          ocrEnabled ||
+          webSearchEnabled) && (
           <div className="mb-4 flex w-full flex-col items-start gap-3">
             <label className="text-token-text-primary block font-medium">
               {localize('com_assistants_capabilities')}
             </label>
             {/* Code Execution */}
             {codeEnabled && <CodeForm agent_id={agent_id} files={code_files} />}
+            {/* Web Search */}
+            {webSearchEnabled && <SearchForm />}
             {/* File Context (OCR) */}
             {ocrEnabled && <FileContext agent_id={agent_id} files={context_files} />}
             {/* Artifacts */}
@@ -288,7 +296,7 @@ export default function AgentConfig({
                 agent_id={agent_id}
               />
             ))}
-            {actions
+            {(actions ?? [])
               .filter((action) => action.agent_id === agent_id)
               .map((action, i) => (
                 <Action
@@ -329,6 +337,8 @@ export default function AgentConfig({
             </div>
           </div>
         </div>
+        {/* MCP Section */}
+        {/* <MCPSection /> */}
       </div>
       <ToolSelectDialog
         isOpen={showToolDialog}

@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const { tool } = require('@langchain/core/tools');
+const { normalizeServerName } = require('@librechat/api');
 const { Constants: AgentConstants, Providers } = require('@librechat/agents');
 const {
   Constants,
@@ -38,6 +39,7 @@ async function createMCPTool({ req, toolKey, provider: _provider }) {
   }
 
   const [toolName, serverName] = toolKey.split(Constants.mcp_delimiter);
+  const normalizedToolKey = `${toolName}${Constants.mcp_delimiter}${normalizeServerName(serverName)}`;
 
   if (!req.user?.id) {
     logger.error(
@@ -48,9 +50,10 @@ async function createMCPTool({ req, toolKey, provider: _provider }) {
 
   /** @type {(toolArguments: Object | string, config?: GraphRunnableConfig) => Promise<unknown>} */
   const _call = async (toolArguments, config) => {
+    const userId = config?.configurable?.user?.id || config?.configurable?.user_id;
     try {
       const derivedSignal = config?.signal ? AbortSignal.any([config.signal]) : undefined;
-      const mcpManager = getMCPManager(config?.configurable?.user_id);
+      const mcpManager = getMCPManager(userId);
       const provider = (config?.metadata?.provider || _provider)?.toLowerCase();
       const result = await mcpManager.callTool({
         serverName,
@@ -58,8 +61,8 @@ async function createMCPTool({ req, toolKey, provider: _provider }) {
         provider,
         toolArguments,
         options: {
-          userId: config?.configurable?.user_id,
           signal: derivedSignal,
+          user: config?.configurable?.user,
         },
       });
 
@@ -72,7 +75,7 @@ async function createMCPTool({ req, toolKey, provider: _provider }) {
       return result;
     } catch (error) {
       logger.error(
-        `[MCP][User: ${config?.configurable?.user_id}][${serverName}] Error calling "${toolName}" MCP tool:`,
+        `[MCP][User: ${userId}][${serverName}] Error calling "${toolName}" MCP tool:`,
         error,
       );
       throw new Error(
@@ -83,7 +86,7 @@ async function createMCPTool({ req, toolKey, provider: _provider }) {
 
   const toolInstance = tool(_call, {
     schema,
-    name: toolKey,
+    name: normalizedToolKey,
     description: description || '',
     responseFormat: AgentConstants.CONTENT_AND_ARTIFACT,
   });

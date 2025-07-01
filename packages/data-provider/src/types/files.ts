@@ -10,6 +10,7 @@ export enum FileSources {
   vectordb = 'vectordb',
   execute_code = 'execute_code',
   mistral_ocr = 'mistral_ocr',
+  azure_mistral_ocr = 'azure_mistral_ocr',
   text = 'text',
 }
 
@@ -131,6 +132,7 @@ export type BatchFile = {
   filepath: string;
   embedded: boolean;
   source: FileSources;
+  temp_file_id?: string;
 };
 
 export type DeleteFilesBody = {

@@ -4,12 +4,13 @@ const { v4 } = require('uuid');
 const OpenAI = require('openai');
 const FormData = require('form-data');
 const { tool } = require('@langchain/core/tools');
+const { logAxiosError } = require('@librechat/api');
+const { logger } = require('@librechat/data-schemas');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { ContentTypes, EImageOutputType } = require('librechat-data-provider');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
-const { logAxiosError, extractBaseURL } = require('~/utils');
+const { extractBaseURL } = require('~/utils');
 const { getFiles } = require('~/models/File');
-const { logger } = require('~/config');
 
 /** Default descriptions for image generation tool  */
 const DEFAULT_IMAGE_GEN_DESCRIPTION = `
@@ -30,7 +31,7 @@ const DEFAULT_IMAGE_EDIT_DESCRIPTION =
 
 When to use \`image_edit_oai\`:
 - The user wants to modify, extend, or remix one **or more** uploaded images, either:
-  - Previously generated, or in the current request (both to be included in the \`image_ids\` array).
+- Previously generated, or in the current request (both to be included in the \`image_ids\` array).
 - Always when the user refers to uploaded images for editing, enhancement, remixing, style transfer, or combining elements.
 - Any current or existing images are to be used as visual guides.
 - If there are any files in the current request, they are more likely than not expected as references for image edit requests.
@@ -64,7 +65,7 @@ const DEFAULT_IMAGE_EDIT_PROMPT_DESCRIPTION = `Describe the changes, enhancement
       Always base this prompt on the most recently uploaded reference images.`;
 
 const displayMessage =
-  'The tool displayed an image. All generated images are already plainly visible, so don\'t repeat the descriptions in detail. Do not list download links as they are available in the UI already. The user may download the images by clicking on them, but do not mention anything about downloading to the user.';
+  "The tool displayed an image. All generated images are already plainly visible, so don't repeat the descriptions in detail. Do not list download links as they are available in the UI already. The user may download the images by clicking on them, but do not mention anything about downloading to the user.";
 
 /**
  * Replaces unwanted characters from the input string

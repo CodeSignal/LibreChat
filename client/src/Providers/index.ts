@@ -1,6 +1,7 @@
-export { default as ToastProvider } from './ToastContext';
 export { default as AssistantsProvider } from './AssistantsContext';
 export { default as AgentsProvider } from './AgentsContext';
+export { default as ToastProvider } from './ToastContext';
+export * from './AgentPanelContext';
 export * from './ChatContext';
 export * from './ShareContext';
 export * from './ToastContext';
@@ -20,3 +21,4 @@ export * from './ArtifactContext';
 export * from './CodeBlockContext';
 export * from './ToolCallsMapContext';
 export * from './SetConvoContext';
+export * from './SearchContext';
