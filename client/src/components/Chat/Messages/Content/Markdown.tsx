@@ -32,10 +32,11 @@ type TCodeProps = {
 };
 
 export const code: React.ElementType = memo(({ className, children }: TCodeProps) => {
-  const canRunCode = useHasAccess({
-    permissionType: PermissionTypes.RUN_CODE,
-    permission: Permissions.USE,
-  });
+  const canRunCode = false;
+  // useHasAccess({
+  //   permissionType: PermissionTypes.RUN_CODE,
+  //   permission: Permissions.USE,
+  // });
   const match = /language-(\w+)/.exec(className ?? '');
   const lang = match && match[1];
   const isMath = lang === 'math';

@@ -518,7 +518,7 @@ export const intefaceSchema = z
     prompts: true,
     agents: true,
     temporaryChat: true,
-    runCode: true,
+    runCode: false,
     webSearch: true,
   });
 
