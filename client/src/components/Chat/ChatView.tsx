@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams, useLocation } from 'react-router-dom';
 import { Constants } from 'librechat-data-provider';
 import type { TMessage } from 'librechat-data-provider';
 import type { ChatFormValues } from '~/common';
@@ -36,21 +36,21 @@ function ChatView({ index = 0 }: { index?: number }) {
   const rootSubmission = useRecoilValue(store.submissionByIndex(index));
   const addedSubmission = useRecoilValue(store.submissionByIndex(index + 1));
   const centerFormOnLanding = useRecoilValue(store.centerFormOnLanding);
-  const {presetsQuery, onSelectPreset} = usePresets();
+  const {presetsQuery, onSetDefaultPreset} = usePresets();
 
   const fileMap = useFileMapContext();
   const initialMessageFromUrl = searchParams.get('initialMessage');
   const usePresetId = searchParams.get('usePresetId');
-
+  
   useEffect(() => {
-    if (usePresetId) {
-      const preset = (presetsQuery.data ?? []).find(p => p.presetId == usePresetId)
+    if (usePresetId && presetsQuery?.data) {
+      const preset = (presetsQuery?.data ?? []).find(p => p.presetId == usePresetId)
       if (preset) {
-        onSelectPreset(preset);
+        onSetDefaultPreset(preset);
         searchParams.delete('usePresetId');
       }
     }
-  }, [usePresetId, presetsQuery.data, onSelectPreset]);
+  }, [usePresetId, presetsQuery?.data ?? [], onSetDefaultPreset]);
 
   useEffect(() => {
     if (initialMessageFromUrl) {

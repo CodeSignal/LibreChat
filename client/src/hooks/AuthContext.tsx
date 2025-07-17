@@ -99,7 +99,7 @@ const AuthContextProvider = ({
       }
       setError(undefined);
 
-      const redirect = document.location.search ? document.location.search.split('redirect=')[1] : '/c/new';
+      const redirect = document.location.search.includes('redirect=') ? document.location.search.split('redirect=')[1] : '/c/new';
       setUserContext({ token, isAuthenticated: true, user, redirect: decodeURIComponent(redirect) });
     },
     onError: (error: TResError | unknown) => {
