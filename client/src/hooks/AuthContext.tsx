@@ -91,7 +91,11 @@ const AuthContextProvider = ({
           return;
         }
 
-        navigate(finalRedirect, { replace: true });
+        if (finalRedirect.startsWith('http://') || finalRedirect.startsWith('https://')) {
+          window.location.href = finalRedirect;
+        } else {
+          navigate(finalRedirect, { replace: true });
+        }
       }, 50),
     [navigate, setUser],
   );
@@ -112,15 +116,7 @@ const AuthContextProvider = ({
     onError: (error: TResError | unknown) => {
       const resError = error as TResError;
       doSetError(resError.message);
-      // Preserve a valid redirect_to across login failures so the deep link survives retries.
-      // Cannot use buildLoginRedirectUrl() here — it reads the current pathname (already /login)
-      // and would return plain /login, dropping the redirect_to destination.
-      const redirectTo = new URLSearchParams(window.location.search).get('redirect_to');
-      const loginPath =
-        redirectTo && isSafeRedirect(redirectTo)
-          ? `/login?redirect_to=${encodeURIComponent(redirectTo)}`
-          : '/login';
-      navigate(loginPath, { replace: true });
+      navigateToLogin({ replace: true });
     },
   });
   const logoutUser = useLogoutUserMutation({
@@ -139,7 +135,7 @@ const AuthContextProvider = ({
         token: undefined,
         isAuthenticated: false,
         user: undefined,
-        redirect: '/login',
+        redirect: data.redirect ?? '/login',
       });
     },
     onError: (error) => {
@@ -192,19 +188,6 @@ const AuthContextProvider = ({
             return;
           }
           navigateToLogin();
-          const storedRedirect = sessionStorage.getItem(SESSION_KEY);
-          sessionStorage.removeItem(SESSION_KEY);
-          const baseUrl = apiBaseUrl();
-          const rawPath = window.location.pathname;
-          const strippedPath =
-            baseUrl && (rawPath === baseUrl || rawPath.startsWith(baseUrl + '/'))
-              ? rawPath.slice(baseUrl.length) || '/'
-              : rawPath;
-          const currentUrl = `${strippedPath}${window.location.search}`;
-          const fallbackRedirect = isSafeRedirect(currentUrl) ? currentUrl : '/c/new';
-          const redirect =
-            storedRedirect && isSafeRedirect(storedRedirect) ? storedRedirect : fallbackRedirect;
-          setUserContext({ user, token, isAuthenticated: true, redirect });
           return;
         }
         console.log('Token is not present. User is not authenticated.');
