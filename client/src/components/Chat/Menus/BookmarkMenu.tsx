@@ -5,17 +5,15 @@ import { BookmarkPlusIcon } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Constants, QueryKeys } from 'librechat-data-provider';
 import { BookmarkFilledIcon, BookmarkIcon } from '@radix-ui/react-icons';
+import { DropdownPopup, TooltipAnchor, Spinner, useToastContext } from '@librechat/client';
 import type { TConversationTag } from 'librechat-data-provider';
 import type { FC } from 'react';
 import type * as t from '~/common';
 import { useConversationTagsQuery, useTagConversationMutation } from '~/data-provider';
-import { DropdownPopup, TooltipAnchor } from '~/components/ui';
 import { BookmarkContext } from '~/Providers/BookmarkContext';
 import { BookmarkEditDialog } from '~/components/Bookmarks';
 import { useBookmarkSuccess, useLocalize } from '~/hooks';
 import { NotificationSeverity } from '~/common';
-import { useToastContext } from '~/Providers';
-import { Spinner } from '~/components';
 import { cn, logger } from '~/utils';
 import store from '~/store';
 
@@ -101,6 +99,16 @@ const BookmarkMenu: FC = () => {
 
   const newBookmarkRef = useRef<HTMLButtonElement>(null);
 
+  const tagsCount = tags?.length ?? 0;
+  const hasBookmarks = tagsCount > 0;
+
+  const buttonAriaLabel = useMemo(() => {
+    if (tagsCount > 0) {
+      return localize('com_ui_bookmarks_count_selected', { count: tagsCount });
+    }
+    return localize('com_ui_bookmarks_add');
+  }, [tagsCount, localize]);
+
   const dropdownItems: t.MenuItemProps[] = useMemo(() => {
     const items: t.MenuItemProps[] = [
       {
@@ -116,19 +124,19 @@ const BookmarkMenu: FC = () => {
 
     if (data) {
       for (const tag of data) {
-        const isSelected = tags?.includes(tag.tag);
+        const isSelected = tags?.includes(tag.tag) === true;
         items.push({
           id: tag.tag,
           label: tag.tag,
           hideOnClick: false,
-          icon:
-            isSelected === true ? (
-              <BookmarkFilledIcon className="size-4" />
-            ) : (
-              <BookmarkIcon className="size-4" />
-            ),
+          icon: isSelected ? (
+            <BookmarkFilledIcon className="size-4" />
+          ) : (
+            <BookmarkIcon className="size-4" />
+          ),
           onClick: () => handleSubmit(tag.tag),
           disabled: mutation.isLoading,
+          ariaChecked: isSelected,
         });
       }
     }
@@ -148,10 +156,10 @@ const BookmarkMenu: FC = () => {
     if (mutation.isLoading) {
       return <Spinner aria-label="Spinner" />;
     }
-    if ((tags?.length ?? 0) > 0) {
-      return <BookmarkFilledIcon className="icon-sm" aria-label="Filled Bookmark" />;
+    if (hasBookmarks) {
+      return <BookmarkFilledIcon className="icon-lg" aria-hidden="true" />;
     }
-    return <BookmarkIcon className="icon-sm" aria-label="Bookmark" />;
+    return <BookmarkIcon className="icon-lg" aria-hidden="true" />;
   };
 
   return (
@@ -170,9 +178,10 @@ const BookmarkMenu: FC = () => {
             render={
               <Ariakit.MenuButton
                 id="bookmark-menu-button"
-                aria-label={localize('com_ui_bookmarks_add')}
+                aria-label={buttonAriaLabel}
+                aria-pressed={hasBookmarks}
                 className={cn(
-                  'mt-text-sm flex size-10 flex-shrink-0 items-center justify-center gap-2 rounded-xl border border-border-light text-sm transition-colors duration-200 hover:bg-surface-hover',
+                  'mt-text-sm flex size-10 flex-shrink-0 items-center justify-center gap-2 rounded-xl border border-border-light bg-presentation text-sm transition-colors duration-200 hover:bg-surface-hover',
                   isMenuOpen ? 'bg-surface-hover' : '',
                 )}
                 data-testid="bookmark-menu"

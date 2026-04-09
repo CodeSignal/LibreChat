@@ -1,14 +1,11 @@
-import { useEffect, useMemo } from 'react';
-import { EModelEndpoint, AgentCapabilities } from 'librechat-data-provider';
-import type { TConfig, TEndpointsConfig, TAgentsEndpoint } from 'librechat-data-provider';
+import { useEffect } from 'react';
+import { useRecoilValue } from 'recoil';
 import { AgentPanelProvider, useAgentPanelContext } from '~/Providers/AgentPanelContext';
-import { useGetEndpointsQuery } from '~/data-provider';
+import { Panel, isEphemeralAgent } from '~/common';
 import VersionPanel from './Version/VersionPanel';
-import { useChatContext } from '~/Providers';
 import ActionsPanel from './ActionsPanel';
 import AgentPanel from './AgentPanel';
-import MCPPanel from './MCPPanel';
-import { Panel } from '~/common';
+import store from '~/store';
 
 export default function AgentPanelSwitch() {
   return (
@@ -19,34 +16,15 @@ export default function AgentPanelSwitch() {
 }
 
 function AgentPanelSwitchWithContext() {
-  const { conversation } = useChatContext();
   const { activePanel, setCurrentAgentId } = useAgentPanelContext();
-
-  // TODO: Implement MCP endpoint
-  const { data: endpointsConfig = {} as TEndpointsConfig } = useGetEndpointsQuery();
-
-  const agentsConfig = useMemo<TAgentsEndpoint | null>(() => {
-    const config = endpointsConfig?.[EModelEndpoint.agents] ?? null;
-    if (!config) return null;
-
-    return {
-      ...(config as TConfig),
-      capabilities: Array.isArray(config.capabilities)
-        ? config.capabilities.map((cap) => cap as unknown as AgentCapabilities)
-        : ([] as AgentCapabilities[]),
-    } as TAgentsEndpoint;
-  }, [endpointsConfig]);
+  const agentId = useRecoilValue(store.conversationAgentIdByIndex(0));
 
   useEffect(() => {
-    const agent_id = conversation?.agent_id ?? '';
-    if (agent_id) {
+    const agent_id = agentId ?? '';
+    if (!isEphemeralAgent(agent_id)) {
       setCurrentAgentId(agent_id);
     }
-  }, [setCurrentAgentId, conversation?.agent_id]);
-
-  if (!conversation?.endpoint) {
-    return null;
-  }
+  }, [setCurrentAgentId, agentId]);
 
   if (activePanel === Panel.actions) {
     return <ActionsPanel />;
@@ -54,8 +32,5 @@ function AgentPanelSwitchWithContext() {
   if (activePanel === Panel.version) {
     return <VersionPanel />;
   }
-  if (activePanel === Panel.mcp) {
-    return <MCPPanel />;
-  }
-  return <AgentPanel agentsConfig={agentsConfig} endpointsConfig={endpointsConfig} />;
+  return <AgentPanel />;
 }

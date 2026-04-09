@@ -1,5 +1,10 @@
 const { FileSources } = require('librechat-data-provider');
-const { uploadMistralOCR, uploadAzureMistralOCR } = require('@librechat/api');
+const {
+  parseDocument,
+  uploadMistralOCR,
+  uploadAzureMistralOCR,
+  uploadGoogleVertexMistralOCR,
+} = require('@librechat/api');
 const {
   getFirebaseURL,
   prepareImageURL,
@@ -222,6 +227,46 @@ const azureMistralOCRStrategy = () => ({
   handleFileUpload: uploadAzureMistralOCR,
 });
 
+const vertexMistralOCRStrategy = () => ({
+  /** @type {typeof saveFileFromURL | null} */
+  saveURL: null,
+  /** @type {typeof getLocalFileURL | null} */
+  getFileURL: null,
+  /** @type {typeof saveLocalBuffer | null} */
+  saveBuffer: null,
+  /** @type {typeof processLocalAvatar | null} */
+  processAvatar: null,
+  /** @type {typeof uploadLocalImage | null} */
+  handleImageUpload: null,
+  /** @type {typeof prepareImagesLocal | null} */
+  prepareImagePayload: null,
+  /** @type {typeof deleteLocalFile | null} */
+  deleteFile: null,
+  /** @type {typeof getLocalFileStream | null} */
+  getDownloadStream: null,
+  handleFileUpload: uploadGoogleVertexMistralOCR,
+});
+
+const documentParserStrategy = () => ({
+  /** @type {typeof saveFileFromURL | null} */
+  saveURL: null,
+  /** @type {typeof getLocalFileURL | null} */
+  getFileURL: null,
+  /** @type {typeof saveLocalBuffer | null} */
+  saveBuffer: null,
+  /** @type {typeof processLocalAvatar | null} */
+  processAvatar: null,
+  /** @type {typeof uploadLocalImage | null} */
+  handleImageUpload: null,
+  /** @type {typeof prepareImagesLocal | null} */
+  prepareImagePayload: null,
+  /** @type {typeof deleteLocalFile | null} */
+  deleteFile: null,
+  /** @type {typeof getLocalFileStream | null} */
+  getDownloadStream: null,
+  handleFileUpload: parseDocument,
+});
+
 // Strategy Selector
 const getStrategyFunctions = (fileSource) => {
   if (fileSource === FileSources.firebase) {
@@ -244,8 +289,16 @@ const getStrategyFunctions = (fileSource) => {
     return mistralOCRStrategy();
   } else if (fileSource === FileSources.azure_mistral_ocr) {
     return azureMistralOCRStrategy();
+  } else if (fileSource === FileSources.vertexai_mistral_ocr) {
+    return vertexMistralOCRStrategy();
+  } else if (fileSource === FileSources.document_parser) {
+    return documentParserStrategy();
+  } else if (fileSource === FileSources.text) {
+    return localStrategy(); // Text files use local strategy
   } else {
-    throw new Error('Invalid file source');
+    throw new Error(
+      `Invalid file source: ${fileSource}. Available sources: ${Object.values(FileSources).join(', ')}`,
+    );
   }
 };
 

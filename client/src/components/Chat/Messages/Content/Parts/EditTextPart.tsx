@@ -1,32 +1,33 @@
-import { useForm } from 'react-hook-form';
-import { ContentTypes } from 'librechat-data-provider';
-import { useRecoilState, useRecoilValue } from 'recoil';
 import { useRef, useEffect, useCallback, useMemo } from 'react';
+import { useRecoilValue } from 'recoil';
+import { useForm } from 'react-hook-form';
+import { TextareaAutosize } from '@librechat/client';
+import { ContentTypes } from 'librechat-data-provider';
+import { Lightbulb, MessageSquare } from 'lucide-react';
 import { useUpdateMessageContentMutation } from 'librechat-data-provider/react-query';
+import type { Agents } from 'librechat-data-provider';
 import type { TEditProps } from '~/common';
+import { useMessagesOperations, useMessagesConversation } from '~/Providers';
 import Container from '~/components/Chat/Messages/Content/Container';
-import { useChatContext, useAddedChatContext } from '~/Providers';
-import { TextareaAutosize } from '~/components/ui';
+import { useGetAddedConvo } from '~/hooks/Chat';
 import { cn, removeFocusRings } from '~/utils';
 import { useLocalize } from '~/hooks';
 import store from '~/store';
 
 const EditTextPart = ({
-  text,
+  part,
   index,
   messageId,
   isSubmitting,
   enterEdit,
-}: Omit<TEditProps, 'message' | 'ask'> & {
+}: Omit<TEditProps, 'message' | 'ask' | 'text'> & {
   index: number;
   messageId: string;
+  part: Agents.MessageContentText | Agents.ReasoningDeltaUpdate;
 }) => {
   const localize = useLocalize();
-  const { addedIndex } = useAddedChatContext();
-  const { getMessages, setMessages, conversation } = useChatContext();
-  const [latestMultiMessage, setLatestMultiMessage] = useRecoilState(
-    store.latestMessageFamily(addedIndex),
-  );
+  const { conversation } = useMessagesConversation();
+  const { ask, getMessages, setMessages } = useMessagesOperations();
 
   const { conversationId = '' } = conversation ?? {};
   const message = useMemo(
@@ -34,15 +35,18 @@ const EditTextPart = ({
     [getMessages, messageId],
   );
 
+  const chatDirection = useRecoilValue(store.chatDirection);
+
+  const getAddedConvo = useGetAddedConvo();
+
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const updateMessageContentMutation = useUpdateMessageContentMutation(conversationId ?? '');
 
-  const chatDirection = useRecoilValue(store.chatDirection).toLowerCase();
-  const isRTL = chatDirection === 'rtl';
+  const isRTL = chatDirection?.toLowerCase() === 'rtl';
 
   const { register, handleSubmit, setValue } = useForm({
     defaultValues: {
-      text: text ?? '',
+      text: (ContentTypes.THINK in part ? part.think : part.text) || '',
     },
   });
 
@@ -55,17 +59,22 @@ const EditTextPart = ({
     }
   }, []);
 
-  /*
-  const resubmitMessage = () => {
-    showToast({
-      status: 'warning',
-      message: localize('com_warning_resubmit_unsupported'),
-    });
-
-    // const resubmitMessage = (data: { text: string }) => {
-    // Not supported by AWS Bedrock
+  const resubmitMessage = (data: { text: string }) => {
     const messages = getMessages();
     const parentMessage = messages?.find((msg) => msg.messageId === message?.parentMessageId);
+
+    const editedContent =
+      part.type === ContentTypes.THINK
+        ? {
+            index,
+            type: ContentTypes.THINK as const,
+            [ContentTypes.THINK]: data.text,
+          }
+        : {
+            index,
+            type: ContentTypes.TEXT as const,
+            [ContentTypes.TEXT]: data.text,
+          };
 
     if (!parentMessage) {
       return;
@@ -73,17 +82,16 @@ const EditTextPart = ({
     ask(
       { ...parentMessage },
       {
-        editedText: data.text,
+        editedContent,
         editedMessageId: messageId,
         isRegenerate: true,
         isEdited: true,
+        addedConvo: getAddedConvo() || undefined,
       },
     );
 
-    setSiblingIdx((siblingIdx ?? 0) - 1);
     enterEdit(true);
   };
-  */
 
   const updateMessage = (data: { text: string }) => {
     const messages = getMessages();
@@ -96,10 +104,6 @@ const EditTextPart = ({
       text: data.text,
       messageId,
     });
-
-    if (messageId === latestMultiMessage?.messageId) {
-      setLatestMultiMessage({ ...latestMultiMessage, text: data.text });
-    }
 
     const isInMessages = messages.some((msg) => msg.messageId === messageId);
     if (!isInMessages) {
@@ -117,9 +121,9 @@ const EditTextPart = ({
       messages.map((msg) =>
         msg.messageId === messageId
           ? {
-            ...msg,
-            content: updatedContent,
-          }
+              ...msg,
+              content: updatedContent,
+            }
           : msg,
       ),
     );
@@ -146,6 +150,22 @@ const EditTextPart = ({
 
   return (
     <Container message={message}>
+      {part.type === ContentTypes.THINK && (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-text-secondary">
+          <span className="flex gap-2 rounded-lg bg-surface-tertiary px-1.5 py-1 font-medium">
+            <Lightbulb className="size-3.5" aria-hidden="true" />
+            {localize('com_ui_thoughts')}
+          </span>
+        </div>
+      )}
+      {part.type !== ContentTypes.THINK && (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-text-secondary">
+          <span className="flex gap-2 rounded-lg bg-surface-tertiary px-1.5 py-1 font-medium">
+            <MessageSquare className="size-3.5" aria-hidden="true" />
+            {localize('com_ui_response')}
+          </span>
+        </div>
+      )}
       <div className="bg-token-main-surface-primary relative flex w-full flex-grow flex-col overflow-hidden rounded-2xl border border-border-medium text-text-primary [&:has(textarea:focus)]:border-border-heavy [&:has(textarea:focus)]:shadow-[0_2px_6px_rgba(0,0,0,.05)]">
         <TextareaAutosize
           {...registerProps}
@@ -163,17 +183,18 @@ const EditTextPart = ({
             'max-h-[65vh] pr-3 md:max-h-[75vh] md:pr-4',
             removeFocusRings,
           )}
+          aria-label={localize('com_ui_editable_message')}
           dir={isRTL ? 'rtl' : 'ltr'}
         />
       </div>
       <div className="mt-2 flex w-full justify-center text-center">
-        {/* <button
+        <button
           className="btn btn-primary relative mr-2"
           disabled={isSubmitting}
           onClick={handleSubmit(resubmitMessage)}
         >
           {localize('com_ui_save_submit')}
-        </button> */}
+        </button>
         <button
           className="btn btn-secondary relative mr-2"
           disabled={isSubmitting}

@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { buildLoginRedirectUrl } from 'librechat-data-provider';
 import { useAuthContext } from '~/hooks';
 
 export default function useAuthRedirect() {
-  const { user, isAuthenticated } = useAuthContext();
+  const { user, roles, isAuthenticated } = useAuthContext();
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -16,16 +18,23 @@ export default function useAuthRedirect() {
         }
 
         navigate(loginPath, { replace: true });
+      } else {
+        return;
       }
+
+      navigate(buildLoginRedirectUrl(location.pathname, location.search, location.hash), {
+        replace: true,
+      });
     }, 300);
 
     return () => {
       clearTimeout(timeout);
     };
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, location]);
 
   return {
     user,
+    roles,
     isAuthenticated,
   };
 }

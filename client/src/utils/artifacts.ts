@@ -1,34 +1,16 @@
 import dedent from 'dedent';
-import { ArtifactModes, shadcnComponents } from 'librechat-data-provider';
+import { shadcnComponents } from 'librechat-data-provider';
 import type {
   SandpackProviderProps,
   SandpackPredefinedTemplate,
 } from '@codesandbox/sandpack-react';
 
-export const getArtifactsMode = ({
-  codeArtifacts,
-  includeShadcnui,
-  customPromptMode,
-}: {
-  codeArtifacts: boolean;
-  includeShadcnui: boolean;
-  customPromptMode: boolean;
-}): ArtifactModes | undefined => {
-  if (!codeArtifacts) {
-    return undefined;
-  } else if (customPromptMode) {
-    return ArtifactModes.CUSTOM;
-  } else if (includeShadcnui) {
-    return ArtifactModes.SHADCNUI;
-  }
-  return ArtifactModes.DEFAULT;
-};
-
 const artifactFilename = {
-  'application/vnd.mermaid': 'App.tsx',
   'application/vnd.react': 'App.tsx',
+  'application/vnd.ant.react': 'App.tsx',
   'text/html': 'index.html',
   'application/vnd.code-html': 'index.html',
+  // mermaid and markdown types are handled separately in useArtifactProps.ts
   default: 'index.html',
   // 'css': 'css',
   // 'javascript': 'js',
@@ -38,13 +20,21 @@ const artifactFilename = {
 };
 
 const artifactTemplate: Record<
-  keyof typeof artifactFilename,
+  | keyof typeof artifactFilename
+  | 'application/vnd.mermaid'
+  | 'text/markdown'
+  | 'text/md'
+  | 'text/plain',
   SandpackPredefinedTemplate | undefined
 > = {
   'text/html': 'static',
   'application/vnd.react': 'react-ts',
+  'application/vnd.ant.react': 'react-ts',
   'application/vnd.mermaid': 'react-ts',
   'application/vnd.code-html': 'static',
+  'text/markdown': 'static',
+  'text/md': 'static',
+  'text/plain': 'static',
   default: 'static',
   // 'css': 'css',
   // 'javascript': 'js',
@@ -52,27 +42,6 @@ const artifactTemplate: Record<
   // 'jsx': 'jsx',
   // 'tsx': 'tsx',
 };
-
-export function getFileExtension(language?: string): string {
-  switch (language) {
-    case 'application/vnd.react':
-      return 'tsx';
-    case 'application/vnd.mermaid':
-      return 'mermaid';
-    case 'text/html':
-      return 'html';
-    // case 'jsx':
-    //   return 'jsx';
-    // case 'tsx':
-    //   return 'tsx';
-    // case 'html':
-    //   return 'html';
-    // case 'css':
-    //   return 'css';
-    default:
-      return 'txt';
-  }
-}
 
 export function getKey(type: string, language?: string): string {
   return `${type}${(language?.length ?? 0) > 0 ? `-${language}` : ''}`;
@@ -122,25 +91,38 @@ const standardDependencies = {
   '@radix-ui/react-slot': '^1.1.0',
   '@radix-ui/react-toggle': '^1.1.0',
   '@radix-ui/react-toggle-group': '^1.1.0',
+  '@radix-ui/react-tooltip': '^1.2.8',
   'embla-carousel-react': '^8.2.0',
   'react-day-picker': '^9.0.8',
   'dat.gui': '^0.7.9',
   vaul: '^0.9.1',
 };
 
-const mermaidDependencies = Object.assign(
-  {
-    mermaid: '^11.4.1',
-    'react-zoom-pan-pinch': '^3.6.1',
-  },
-  standardDependencies,
-);
+const mermaidDependencies = {
+  mermaid: '^11.4.1',
+  'react-zoom-pan-pinch': '^3.6.1',
+  'class-variance-authority': '^0.6.0',
+  clsx: '^1.2.1',
+  'tailwind-merge': '^1.9.1',
+  '@radix-ui/react-slot': '^1.1.0',
+};
 
-const dependenciesMap: Record<keyof typeof artifactFilename, object> = {
+const dependenciesMap: Record<
+  | keyof typeof artifactFilename
+  | 'application/vnd.mermaid'
+  | 'text/markdown'
+  | 'text/md'
+  | 'text/plain',
+  Record<string, string>
+> = {
   'application/vnd.mermaid': mermaidDependencies,
   'application/vnd.react': standardDependencies,
+  'application/vnd.ant.react': standardDependencies,
   'text/html': standardDependencies,
   'application/vnd.code-html': standardDependencies,
+  'text/markdown': {},
+  'text/md': {},
+  'text/plain': {},
   default: standardDependencies,
 };
 
@@ -157,7 +139,7 @@ export function getProps(type: string): Partial<SandpackProviderProps> {
 }
 
 export const sharedOptions: SandpackProviderProps['options'] = {
-  externalResources: ['https://unpkg.com/@tailwindcss/ui/dist/tailwind-ui.min.css'],
+  externalResources: ['https://cdn.tailwindcss.com/3.4.17'],
 };
 
 export const sharedFiles = {
@@ -206,7 +188,7 @@ export const sharedFiles = {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Document</title>
-        <script src="https://cdn.tailwindcss.com"></script>
+        <script src="https://cdn.tailwindcss.com/3.4.17"></script>
       </head>
       <body>
         <div id="root"></div>

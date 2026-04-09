@@ -3,19 +3,24 @@ import { z } from 'zod';
 import { tool } from '@langchain/core/tools';
 import { Tools } from 'librechat-data-provider';
 import { logger } from '@librechat/data-schemas';
+import { HumanMessage } from '@langchain/core/messages';
 import { Run, Providers, GraphEvents } from '@librechat/agents';
 import type {
+  OpenAIClientOptions,
   StreamEventData,
   ToolEndCallback,
+  ClientOptions,
   EventHandler,
   ToolEndData,
   LLMConfig,
 } from '@librechat/agents';
+import type { ObjectId, MemoryMethods, IUser } from '@librechat/data-schemas';
 import type { TAttachment, MemoryArtifact } from 'librechat-data-provider';
-import type { ObjectId, MemoryMethods } from '@librechat/data-schemas';
-import type { BaseMessage } from '@langchain/core/messages';
+import type { BaseMessage, ToolMessage } from '@langchain/core/messages';
 import type { Response as ServerResponse } from 'express';
-import { Tokenizer } from '~/utils';
+import { GenerationJobManager } from '~/stream/GenerationJobManager';
+import { resolveHeaders, createSafeUser } from '~/utils';
+import Tokenizer from '~/utils/tokenizer';
 
 type RequiredMemoryMethods = Pick<
   MemoryMethods,
@@ -40,38 +45,38 @@ export const memoryInstructions =
 const getDefaultInstructions = (
   validKeys?: string[],
   tokenLimit?: number,
-) => `Use the \`set_memory\` tool to save important information about the user, but ONLY when the user has explicitly provided this information. If there is nothing to note about the user specifically, END THE TURN IMMEDIATELY.
+) => `Use the \`set_memory\` tool to save important information about the user, but ONLY when the user has requested you to remember something.
 
-  The \`delete_memory\` tool should only be used in two scenarios:
+The \`delete_memory\` tool should only be used in two scenarios:
   1. When the user explicitly asks to forget or remove specific information
   2. When updating existing memories, use the \`set_memory\` tool instead of deleting and re-adding the memory.
-  
-  ${
-    validKeys && validKeys.length > 0
-      ? `CRITICAL INSTRUCTION: Only the following keys are valid for storing memories:
-  ${validKeys.map((key) => `- ${key}`).join('\n  ')}`
-      : 'You can use any appropriate key to store memories about the user.'
-  }
 
-  ${
-    tokenLimit
-      ? `⚠️ TOKEN LIMIT: Each memory value must not exceed ${tokenLimit} tokens. Be concise and store only essential information.`
-      : ''
-  }
+1. ONLY use memory tools when the user requests memory actions with phrases like:
+   - "Remember [that] [I]..."
+   - "Don't forget [that] [I]..."
+   - "Please remember..."
+   - "Store this..."
+   - "Forget [that] [I]..."
+   - "Delete the memory about..."
 
-  ⚠️ WARNING ⚠️
-  DO NOT STORE ANY INFORMATION UNLESS THE USER HAS EXPLICITLY PROVIDED IT.
-  ONLY store information the user has EXPLICITLY shared.
-  NEVER guess or assume user information.
-  ALL memory values must be factual statements about THIS specific user.
-  If nothing needs to be stored, DO NOT CALL any memory tools.
-  If you're unsure whether to store something, DO NOT store it.
-  If nothing needs to be stored, END THE TURN IMMEDIATELY.`;
+2. NEVER store information just because the user mentioned it in conversation.
+
+3. NEVER use memory tools when the user asks you to use other tools or invoke tools in general.
+
+4. Memory tools are ONLY for memory requests, not for general tool usage.
+
+5. If the user doesn't ask you to remember or forget something, DO NOT use any memory tools.
+
+${validKeys && validKeys.length > 0 ? `\nVALID KEYS: ${validKeys.join(', ')}` : ''}
+
+${tokenLimit ? `\nTOKEN LIMIT: Maximum ${tokenLimit} tokens per memory value.` : ''}
+
+When in doubt, and the user hasn't asked to remember or forget anything, END THE TURN IMMEDIATELY.`;
 
 /**
  * Creates a memory tool instance with user context
  */
-const createMemoryTool = ({
+export const createMemoryTool = ({
   userId,
   setMemory,
   validKeys,
@@ -84,6 +89,9 @@ const createMemoryTool = ({
   tokenLimit?: number;
   totalTokens?: number;
 }) => {
+  const remainingTokens = tokenLimit ? tokenLimit - totalTokens : Infinity;
+  const isOverflowing = tokenLimit ? remainingTokens <= 0 : false;
+
   return tool(
     async ({ key, value }) => {
       try {
@@ -93,24 +101,48 @@ const createMemoryTool = ({
               ', ',
             )}`,
           );
-          return `Invalid key "${key}". Must be one of: ${validKeys.join(', ')}`;
+          return [`Invalid key "${key}". Must be one of: ${validKeys.join(', ')}`, undefined];
         }
 
         const tokenCount = Tokenizer.getTokenCount(value, 'o200k_base');
 
-        if (tokenLimit && tokenCount > tokenLimit) {
-          logger.warn(
-            `Memory Agent failed to set memory: Value exceeds token limit. Value has ${tokenCount} tokens, but limit is ${tokenLimit}`,
-          );
-          return `Memory value too large: ${tokenCount} tokens exceeds limit of ${tokenLimit}`;
+        if (isOverflowing) {
+          const errorArtifact: Record<Tools.memory, MemoryArtifact> = {
+            [Tools.memory]: {
+              key: 'system',
+              type: 'error',
+              value: JSON.stringify({
+                errorType: 'already_exceeded',
+                tokenCount: Math.abs(remainingTokens),
+                totalTokens: totalTokens,
+                tokenLimit: tokenLimit!,
+              }),
+              tokenCount: totalTokens,
+            },
+          };
+          return [`Memory storage exceeded. Cannot save new memories.`, errorArtifact];
         }
 
-        if (tokenLimit && totalTokens + tokenCount > tokenLimit) {
-          const remainingCapacity = tokenLimit - totalTokens;
-          logger.warn(
-            `Memory Agent failed to set memory: Would exceed total token limit. Current usage: ${totalTokens}, new memory: ${tokenCount} tokens, limit: ${tokenLimit}`,
-          );
-          return `Cannot add memory: would exceed token limit. Current usage: ${totalTokens}/${tokenLimit} tokens. This memory requires ${tokenCount} tokens, but only ${remainingCapacity} tokens available.`;
+        if (tokenLimit) {
+          const newTotalTokens = totalTokens + tokenCount;
+          const newRemainingTokens = tokenLimit - newTotalTokens;
+
+          if (newRemainingTokens < 0) {
+            const errorArtifact: Record<Tools.memory, MemoryArtifact> = {
+              [Tools.memory]: {
+                key: 'system',
+                type: 'error',
+                value: JSON.stringify({
+                  errorType: 'would_exceed',
+                  tokenCount: Math.abs(newRemainingTokens),
+                  totalTokens: newTotalTokens,
+                  tokenLimit,
+                }),
+                tokenCount: totalTokens,
+              },
+            };
+            return [`Memory storage would exceed limit. Cannot save this memory.`, errorArtifact];
+          }
         }
 
         const artifact: Record<Tools.memory, MemoryArtifact> = {
@@ -177,7 +209,7 @@ const createDeleteMemoryTool = ({
               ', ',
             )}`,
           );
-          return `Invalid key "${key}". Must be one of: ${validKeys.join(', ')}`;
+          return [`Invalid key "${key}". Must be one of: ${validKeys.join(', ')}`, undefined];
         }
 
         const artifact: Record<Tools.memory, MemoryArtifact> = {
@@ -221,6 +253,7 @@ export class BasicToolEndHandler implements EventHandler {
   constructor(callback?: ToolEndCallback) {
     this.callback = callback;
   }
+
   handle(
     event: string,
     data: StreamEventData | undefined,
@@ -253,6 +286,8 @@ export async function processMemory({
   llmConfig,
   tokenLimit,
   totalTokens = 0,
+  streamId = null,
+  user,
 }: {
   res: ServerResponse;
   setMemory: MemoryMethods['setMemory'];
@@ -267,9 +302,17 @@ export async function processMemory({
   tokenLimit?: number;
   totalTokens?: number;
   llmConfig?: Partial<LLMConfig>;
+  streamId?: string | null;
+  user?: IUser;
 }): Promise<(TAttachment | null)[] | undefined> {
   try {
-    const memoryTool = createMemoryTool({ userId, tokenLimit, setMemory, validKeys, totalTokens });
+    const memoryTool = createMemoryTool({
+      userId,
+      tokenLimit,
+      setMemory,
+      validKeys,
+      totalTokens,
+    });
     const deleteMemoryTool = createDeleteMemoryTool({
       userId,
       validKeys,
@@ -299,7 +342,7 @@ ${memory ?? 'No existing memories'}`;
       disableStreaming: true,
     };
 
-    const finalLLMConfig = {
+    const finalLLMConfig: ClientOptions = {
       ...defaultLLMConfig,
       ...llmConfig,
       /**
@@ -309,11 +352,98 @@ ${memory ?? 'No existing memories'}`;
       disableStreaming: true,
     };
 
+    // Handle GPT-5+ models
+    if ('model' in finalLLMConfig && /\bgpt-[5-9](?:\.\d+)?\b/i.test(finalLLMConfig.model ?? '')) {
+      // Remove temperature for GPT-5+ models
+      delete finalLLMConfig.temperature;
+
+      // Move maxTokens to modelKwargs for GPT-5+ models
+      if ('maxTokens' in finalLLMConfig && finalLLMConfig.maxTokens != null) {
+        const modelKwargs = (finalLLMConfig as OpenAIClientOptions).modelKwargs ?? {};
+        const paramName =
+          (finalLLMConfig as OpenAIClientOptions).useResponsesApi === true
+            ? 'max_output_tokens'
+            : 'max_completion_tokens';
+        modelKwargs[paramName] = finalLLMConfig.maxTokens;
+        delete finalLLMConfig.maxTokens;
+        (finalLLMConfig as OpenAIClientOptions).modelKwargs = modelKwargs;
+      }
+    }
+
+    const bedrockConfig = finalLLMConfig as {
+      additionalModelRequestFields?: { thinking?: unknown };
+      temperature?: number;
+    };
+    if (
+      llmConfig?.provider === Providers.BEDROCK &&
+      bedrockConfig.additionalModelRequestFields?.thinking != null &&
+      bedrockConfig.temperature != null
+    ) {
+      (finalLLMConfig as unknown as Record<string, unknown>).temperature = 1;
+    }
+
+    const anthropicConfig = finalLLMConfig as {
+      thinking?: { type?: string };
+      temperature?: number;
+    };
+    if (
+      llmConfig?.provider === Providers.ANTHROPIC &&
+      anthropicConfig.thinking?.type === 'enabled' &&
+      anthropicConfig.temperature != null
+    ) {
+      delete (finalLLMConfig as Record<string, unknown>).temperature;
+    }
+
+    const llmConfigWithHeaders = finalLLMConfig as OpenAIClientOptions;
+    if (llmConfigWithHeaders?.configuration?.defaultHeaders != null) {
+      llmConfigWithHeaders.configuration.defaultHeaders = resolveHeaders({
+        headers: llmConfigWithHeaders.configuration.defaultHeaders as Record<string, string>,
+        user: user ? createSafeUser(user) : undefined,
+      });
+    }
+
     const artifactPromises: Promise<TAttachment | null>[] = [];
-    const memoryCallback = createMemoryCallback({ res, artifactPromises });
+    const memoryCallback = createMemoryCallback({ res, artifactPromises, streamId });
     const customHandlers = {
       [GraphEvents.TOOL_END]: new BasicToolEndHandler(memoryCallback),
     };
+
+    /**
+     * For Bedrock provider, include instructions in the user message instead of as a system prompt.
+     * Bedrock's Converse API requires conversations to start with a user message, not a system message.
+     * Other providers can use the standard system prompt approach.
+     */
+    const isBedrock = llmConfig?.provider === Providers.BEDROCK;
+
+    let graphInstructions: string | undefined = instructions;
+    let graphAdditionalInstructions: string | undefined = memoryStatus;
+    let processedMessages = messages;
+
+    if (isBedrock) {
+      const combinedInstructions = [instructions, memoryStatus].filter(Boolean).join('\n\n');
+
+      if (messages.length > 0) {
+        const firstMessage = messages[0];
+        const originalContent =
+          typeof firstMessage.content === 'string' ? firstMessage.content : '';
+
+        if (typeof firstMessage.content !== 'string') {
+          logger.warn(
+            'Bedrock memory processing: First message has non-string content, using empty string',
+          );
+        }
+
+        const bedrockUserMessage = new HumanMessage(
+          `${combinedInstructions}\n\n${originalContent}`,
+        );
+        processedMessages = [bedrockUserMessage, ...messages.slice(1)];
+      } else {
+        processedMessages = [new HumanMessage(combinedInstructions)];
+      }
+
+      graphInstructions = undefined;
+      graphAdditionalInstructions = undefined;
+    }
 
     const run = await Run.create({
       runId: messageId,
@@ -321,8 +451,8 @@ ${memory ?? 'No existing memories'}`;
         type: 'standard',
         llmConfig: finalLLMConfig,
         tools: [memoryTool, deleteMemoryTool],
-        instructions,
-        additional_instructions: memoryStatus,
+        instructions: graphInstructions,
+        additional_instructions: graphAdditionalInstructions,
         toolEnd: true,
       },
       customHandlers,
@@ -330,26 +460,37 @@ ${memory ?? 'No existing memories'}`;
     });
 
     const config = {
+      runName: 'MemoryRun',
       configurable: {
+        user_id: userId,
+        thread_id: conversationId,
         provider: llmConfig?.provider,
-        thread_id: `memory-run-${conversationId}`,
       },
       streamMode: 'values',
+      recursionLimit: 3,
       version: 'v2',
     } as const;
 
     const inputs = {
-      messages,
+      messages: processedMessages,
     };
     const content = await run.processStream(inputs, config);
     if (content) {
-      logger.debug('Memory Agent processed memory successfully', content);
+      logger.debug('[MemoryAgent] Processed successfully', {
+        userId,
+        conversationId,
+        messageId,
+        provider: llmConfig?.provider,
+      });
     } else {
-      logger.warn('Memory Agent processed memory but returned no content');
+      logger.debug('[MemoryAgent] Returned no content', { userId, conversationId, messageId });
     }
     return await Promise.all(artifactPromises);
   } catch (error) {
-    logger.error('Memory Agent failed to process memory', error);
+    logger.error(
+      `[MemoryAgent] Failed to process memory | userId: ${userId} | conversationId: ${conversationId} | messageId: ${messageId}`,
+      { error },
+    );
   }
 }
 
@@ -360,6 +501,8 @@ export async function createMemoryProcessor({
   memoryMethods,
   conversationId,
   config = {},
+  streamId = null,
+  user,
 }: {
   res: ServerResponse;
   messageId: string;
@@ -367,6 +510,8 @@ export async function createMemoryProcessor({
   userId: string | ObjectId;
   memoryMethods: RequiredMemoryMethods;
   config?: MemoryConfig;
+  streamId?: string | null;
+  user?: IUser;
 }): Promise<[string, (messages: BaseMessage[]) => Promise<(TAttachment | null)[] | undefined>]> {
   const { validKeys, instructions, llmConfig, tokenLimit } = config;
   const finalInstructions = instructions || getDefaultInstructions(validKeys, tokenLimit);
@@ -387,12 +532,14 @@ export async function createMemoryProcessor({
           llmConfig,
           messageId,
           tokenLimit,
+          streamId,
           conversationId,
           memory: withKeys,
           totalTokens: totalTokens || 0,
           instructions: finalInstructions,
           setMemory: memoryMethods.setMemory,
           deleteMemory: memoryMethods.deleteMemory,
+          user,
         });
       } catch (error) {
         logger.error('Memory Agent failed to process memory', error);
@@ -405,12 +552,14 @@ async function handleMemoryArtifact({
   res,
   data,
   metadata,
+  streamId = null,
 }: {
   res: ServerResponse;
   data: ToolEndData;
   metadata?: ToolEndMetadata;
+  streamId?: string | null;
 }) {
-  const output = data?.output;
+  const output = data?.output as ToolMessage | undefined;
   if (!output) {
     return null;
   }
@@ -434,7 +583,11 @@ async function handleMemoryArtifact({
   if (!res.headersSent) {
     return attachment;
   }
-  res.write(`event: attachment\ndata: ${JSON.stringify(attachment)}\n\n`);
+  if (streamId) {
+    GenerationJobManager.emitChunk(streamId, { event: 'attachment', data: attachment });
+  } else {
+    res.write(`event: attachment\ndata: ${JSON.stringify(attachment)}\n\n`);
+  }
   return attachment;
 }
 
@@ -443,23 +596,26 @@ async function handleMemoryArtifact({
  * @param params - The parameters object
  * @param params.res - The server response object
  * @param params.artifactPromises - Array to collect artifact promises
+ * @param params.streamId - The stream ID for resumable mode, or null for standard mode
  * @returns The memory callback function
  */
 export function createMemoryCallback({
   res,
   artifactPromises,
+  streamId = null,
 }: {
   res: ServerResponse;
   artifactPromises: Promise<Partial<TAttachment> | null>[];
+  streamId?: string | null;
 }): ToolEndCallback {
   return async (data: ToolEndData, metadata?: Record<string, unknown>) => {
-    const output = data?.output;
+    const output = data?.output as ToolMessage | undefined;
     const memoryArtifact = output?.artifact?.[Tools.memory] as MemoryArtifact;
     if (memoryArtifact == null) {
       return;
     }
     artifactPromises.push(
-      handleMemoryArtifact({ res, data, metadata }).catch((error) => {
+      handleMemoryArtifact({ res, data, metadata, streamId }).catch((error) => {
         logger.error('Error processing memory artifact content:', error);
         return null;
       }),

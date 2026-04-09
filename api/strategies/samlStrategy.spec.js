@@ -1,15 +1,16 @@
-const fs = require('fs');
-const path = require('path');
-const fetch = require('node-fetch');
-const { Strategy: SamlStrategy } = require('@node-saml/passport-saml');
-const { findUser, createUser, updateUser } = require('~/models');
-const { setupSaml, getCertificateContent } = require('./samlStrategy');
-
 // --- Mocks ---
 jest.mock('fs');
 jest.mock('path');
 jest.mock('node-fetch');
 jest.mock('@node-saml/passport-saml');
+jest.mock('@librechat/data-schemas', () => ({
+  logger: {
+    info: jest.fn(),
+    debug: jest.fn(),
+    error: jest.fn(),
+  },
+  hashToken: jest.fn().mockResolvedValue('hashed-token'),
+}));
 jest.mock('~/models', () => ({
   findUser: jest.fn(),
   createUser: jest.fn(),
@@ -21,33 +22,37 @@ jest.mock('~/server/services/Config', () => ({
       socialLogins: ['saml'],
     },
   },
-  getBalanceConfig: jest.fn().mockResolvedValue({
+  getAppConfig: jest.fn().mockResolvedValue({}),
+}));
+jest.mock('@librechat/api', () => ({
+  isEmailDomainAllowed: jest.fn(() => true),
+  getBalanceConfig: jest.fn(() => ({
     tokenCredits: 1000,
-    startingBalance: 1000,
-  }),
+    startBalance: 1000,
+  })),
 }));
 jest.mock('~/server/services/Config/EndpointService', () => ({
   config: {},
-}));
-jest.mock('~/server/utils', () => ({
-  isEnabled: jest.fn(() => false),
-  isUserProvided: jest.fn(() => false),
 }));
 jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: jest.fn(() => ({
     saveBuffer: jest.fn().mockResolvedValue('/fake/path/to/avatar.png'),
   })),
 }));
-jest.mock('~/server/utils/crypto', () => ({
-  hashToken: jest.fn().mockResolvedValue('hashed-token'),
+jest.mock('~/config/paths', () => ({
+  root: '/fake/root/path',
 }));
-jest.mock('~/config', () => ({
-  logger: {
-    info: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  },
-}));
+
+const fs = require('fs');
+const path = require('path');
+const fetch = require('node-fetch');
+const { Strategy: SamlStrategy } = require('@node-saml/passport-saml');
+const { setupSaml, getCertificateContent } = require('./samlStrategy');
+
+// Configure fs mock
+jest.mocked(fs).existsSync = jest.fn();
+jest.mocked(fs).statSync = jest.fn();
+jest.mocked(fs).readFileSync = jest.fn();
 
 // To capture the verify callback from the strategy, we grab it from the mock constructor
 let verifyCallback;
@@ -376,11 +381,11 @@ u7wlOSk+oFzDIO/UILIA
   });
 
   it('should update an existing user on login', async () => {
-    // Set up findUser to return an existing user
+    // Set up findUser to return an existing user with saml provider
     const { findUser } = require('~/models');
     const existingUser = {
       _id: 'existing-user-id',
-      provider: 'local',
+      provider: 'saml',
       email: baseProfile.email,
       samlId: '',
       username: 'oldusername',
@@ -396,6 +401,26 @@ u7wlOSk+oFzDIO/UILIA
     expect(user.username).toBe(baseProfile.username);
     expect(user.name).toBe(`${baseProfile.given_name} ${baseProfile.family_name}`);
     expect(user.email).toBe(baseProfile.email);
+  });
+
+  it('should block login when email exists with different provider', async () => {
+    // Set up findUser to return a user with different provider
+    const { findUser } = require('~/models');
+    const existingUser = {
+      _id: 'existing-user-id',
+      provider: 'google',
+      email: baseProfile.email,
+      googleId: 'some-google-id',
+      username: 'existinguser',
+      name: 'Existing User',
+    };
+    findUser.mockResolvedValue(existingUser);
+
+    const profile = { ...baseProfile };
+    const result = await validate(profile);
+
+    expect(result.user).toBe(false);
+    expect(result.details.message).toBe(require('librechat-data-provider').ErrorTypes.AUTH_FAILED);
   });
 
   it('should attempt to download and save the avatar if picture is provided', async () => {

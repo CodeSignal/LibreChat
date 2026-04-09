@@ -1,16 +1,23 @@
 const multer = require('multer');
 const express = require('express');
+const { sleep } = require('@librechat/agents');
+const { isEnabled, resolveImportMaxFileSize } = require('@librechat/api');
+const { logger } = require('@librechat/data-schemas');
 const { CacheKeys, EModelEndpoint } = require('librechat-data-provider');
+const {
+  createImportLimiters,
+  validateConvoAccess,
+  createForkLimiters,
+  configMiddleware,
+} = require('~/server/middleware');
 const { getConvosByCursor, deleteConvos, getConvo, saveConvo } = require('~/models/Conversation');
 const { forkConversation, duplicateConversation } = require('~/server/utils/import/fork');
 const { storage, importFileFilter } = require('~/server/routes/files/multer');
+const { deleteAllSharedLinks, deleteConvoSharedLink } = require('~/models');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 const { importConversations } = require('~/server/utils/import');
-const { createImportLimiters } = require('~/server/middleware');
 const { deleteToolCalls } = require('~/models/ToolCall');
-const { isEnabled, sleep } = require('~/server/utils');
 const getLogStores = require('~/cache/getLogStores');
-const { logger } = require('~/config');
 
 const assistantClients = {
   [EModelEndpoint.azureAssistants]: require('~/server/services/Endpoints/azureAssistants'),
@@ -25,7 +32,8 @@ router.get('/', async (req, res) => {
   const cursor = req.query.cursor;
   const isArchived = isEnabled(req.query.isArchived);
   const search = req.query.search ? decodeURIComponent(req.query.search) : undefined;
-  const order = req.query.order || 'desc';
+  const sortBy = req.query.sortBy || 'updatedAt';
+  const sortDirection = req.query.sortDirection || 'desc';
 
   let tags;
   if (req.query.tags) {
@@ -39,10 +47,12 @@ router.get('/', async (req, res) => {
       isArchived,
       tags,
       search,
-      order,
+      sortBy,
+      sortDirection,
     });
     res.status(200).json(result);
   } catch (error) {
+    logger.error('Error fetching conversations', error);
     res.status(500).json({ error: 'Error fetching conversations' });
   }
 });
@@ -58,16 +68,17 @@ router.get('/:conversationId', async (req, res) => {
   }
 });
 
-router.post('/gen_title', async (req, res) => {
-  const { conversationId } = req.body;
+router.get('/gen_title/:conversationId', async (req, res) => {
+  const { conversationId } = req.params;
   const titleCache = getLogStores(CacheKeys.GEN_TITLE);
   const key = `${req.user.id}-${conversationId}`;
   let title = await titleCache.get(key);
 
   if (!title) {
-    // Retry every 1s for up to 20s
-    for (let i = 0; i < 20; i++) {
-      await sleep(1000);
+    // Exponential backoff: 500ms, 1s, 2s, 4s, 8s (total ~15.5s max wait)
+    const delays = [500, 1000, 2000, 4000, 8000];
+    for (const delay of delays) {
+      await sleep(delay);
       title = await titleCache.get(key);
       if (title) {
         break;
@@ -87,7 +98,7 @@ router.post('/gen_title', async (req, res) => {
 
 router.delete('/', async (req, res) => {
   let filter = {};
-  const { conversationId, source, thread_id, endpoint } = req.body.arg;
+  const { conversationId, source, thread_id, endpoint } = req.body?.arg ?? {};
 
   // Prevent deletion of all conversations
   if (!conversationId && !source && !thread_id && !endpoint) {
@@ -109,7 +120,7 @@ router.delete('/', async (req, res) => {
     /** @type {{ openai: OpenAI }} */
     const { openai } = await assistantClients[endpoint].initializeClient({ req, res });
     try {
-      const response = await openai.beta.threads.del(thread_id);
+      const response = await openai.beta.threads.delete(thread_id);
       logger.debug('Deleted OpenAI thread:', response);
     } catch (error) {
       logger.error('Error deleting OpenAI thread:', error);
@@ -118,7 +129,10 @@ router.delete('/', async (req, res) => {
 
   try {
     const dbResponse = await deleteConvos(req.user.id, filter);
-    await deleteToolCalls(req.user.id, filter.conversationId);
+    if (filter.conversationId) {
+      await deleteToolCalls(req.user.id, filter.conversationId);
+      await deleteConvoSharedLink(req.user.id, filter.conversationId);
+    }
     res.status(201).json(dbResponse);
   } catch (error) {
     logger.error('Error clearing conversations', error);
@@ -130,6 +144,7 @@ router.delete('/all', async (req, res) => {
   try {
     const dbResponse = await deleteConvos(req.user.id, {});
     await deleteToolCalls(req.user.id);
+    await deleteAllSharedLinks(req.user.id);
     res.status(201).json(dbResponse);
   } catch (error) {
     logger.error('Error clearing conversations', error);
@@ -137,17 +152,70 @@ router.delete('/all', async (req, res) => {
   }
 });
 
-router.post('/update', async (req, res) => {
-  const update = req.body.arg;
+/**
+ * Archives or unarchives a conversation.
+ * @route POST /archive
+ * @param {string} req.body.arg.conversationId - The conversation ID to archive/unarchive.
+ * @param {boolean} req.body.arg.isArchived - Whether to archive (true) or unarchive (false).
+ * @returns {object} 200 - The updated conversation object.
+ */
+router.post('/archive', validateConvoAccess, async (req, res) => {
+  const { conversationId, isArchived } = req.body?.arg ?? {};
 
-  if (!update.conversationId) {
+  if (!conversationId) {
     return res.status(400).json({ error: 'conversationId is required' });
   }
 
+  if (typeof isArchived !== 'boolean') {
+    return res.status(400).json({ error: 'isArchived must be a boolean' });
+  }
+
   try {
-    const dbResponse = await saveConvo(req, update, {
-      context: `POST /api/convos/update ${update.conversationId}`,
-    });
+    const dbResponse = await saveConvo(
+      req,
+      { conversationId, isArchived },
+      { context: `POST /api/convos/archive ${conversationId}` },
+    );
+    res.status(200).json(dbResponse);
+  } catch (error) {
+    logger.error('Error archiving conversation', error);
+    res.status(500).send('Error archiving conversation');
+  }
+});
+
+/** Maximum allowed length for conversation titles */
+const MAX_CONVO_TITLE_LENGTH = 1024;
+
+/**
+ * Updates a conversation's title.
+ * @route POST /update
+ * @param {string} req.body.arg.conversationId - The conversation ID to update.
+ * @param {string} req.body.arg.title - The new title for the conversation.
+ * @returns {object} 201 - The updated conversation object.
+ */
+router.post('/update', validateConvoAccess, async (req, res) => {
+  const { conversationId, title } = req.body?.arg ?? {};
+
+  if (!conversationId) {
+    return res.status(400).json({ error: 'conversationId is required' });
+  }
+
+  if (title === undefined) {
+    return res.status(400).json({ error: 'title is required' });
+  }
+
+  if (typeof title !== 'string') {
+    return res.status(400).json({ error: 'title must be a string' });
+  }
+
+  const sanitizedTitle = title.trim().slice(0, MAX_CONVO_TITLE_LENGTH);
+
+  try {
+    const dbResponse = await saveConvo(
+      req,
+      { conversationId, title: sanitizedTitle },
+      { context: `POST /api/convos/update ${conversationId}` },
+    );
     res.status(201).json(dbResponse);
   } catch (error) {
     logger.error('Error updating conversation', error);
@@ -156,7 +224,27 @@ router.post('/update', async (req, res) => {
 });
 
 const { importIpLimiter, importUserLimiter } = createImportLimiters();
-const upload = multer({ storage: storage, fileFilter: importFileFilter });
+/** Fork and duplicate share one rate-limit budget (same "clone" operation class) */
+const { forkIpLimiter, forkUserLimiter } = createForkLimiters();
+const importMaxFileSize = resolveImportMaxFileSize();
+const upload = multer({
+  storage,
+  fileFilter: importFileFilter,
+  limits: { fileSize: importMaxFileSize },
+});
+const uploadSingle = upload.single('file');
+
+function handleUpload(req, res, next) {
+  uploadSingle(req, res, (err) => {
+    if (err && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ message: 'File exceeds the maximum allowed size' });
+    }
+    if (err) {
+      return next(err);
+    }
+    next();
+  });
+}
 
 /**
  * Imports a conversation from a JSON file and saves it to the database.
@@ -168,7 +256,8 @@ router.post(
   '/import',
   importIpLimiter,
   importUserLimiter,
-  upload.single('file'),
+  configMiddleware,
+  handleUpload,
   async (req, res) => {
     try {
       /* TODO: optimize to return imported conversations and add manually */
@@ -189,7 +278,7 @@ router.post(
  * @param {express.Response<TForkConvoResponse>} res - Express response object.
  * @returns {Promise<void>} - The response after forking the conversation.
  */
-router.post('/fork', async (req, res) => {
+router.post('/fork', forkIpLimiter, forkUserLimiter, async (req, res) => {
   try {
     /** @type {TForkConvoRequest} */
     const { conversationId, messageId, option, splitAtTarget, latestMessageId } = req.body;
@@ -210,7 +299,7 @@ router.post('/fork', async (req, res) => {
   }
 });
 
-router.post('/duplicate', async (req, res) => {
+router.post('/duplicate', forkIpLimiter, forkUserLimiter, async (req, res) => {
   const { conversationId, title } = req.body;
 
   try {

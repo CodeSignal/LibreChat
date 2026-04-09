@@ -1,16 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
+import { useCombobox } from '@librechat/client';
 import { AutoSizer, List } from 'react-virtualized';
 import { EModelEndpoint } from 'librechat-data-provider';
-import type { SetterOrUpdater } from 'recoil';
 import type { MentionOption, ConvoGenerator } from '~/common';
+import type { SetterOrUpdater } from 'recoil';
+import { useGetConversation, useLocalize, TranslationKeys } from '~/hooks';
 import useSelectMention from '~/hooks/Input/useSelectMention';
 import { useAssistantsMapContext } from '~/Providers';
 import useMentions from '~/hooks/Input/useMentions';
-import { useLocalize, useCombobox, TranslationKeys } from '~/hooks';
 import { removeCharIfLast } from '~/utils';
 import MentionItem from './MentionItem';
 
-const ROW_HEIGHT = 40;
+const ROW_HEIGHT = 44;
 
 export default function Mention({
   setShowMentionPopover,
@@ -28,6 +29,7 @@ export default function Mention({
   includeAssistants?: boolean;
 }) {
   const localize = useLocalize();
+  const getConversation = useGetConversation(0);
   const assistantsMap = useAssistantsMapContext();
   const {
     options,
@@ -43,6 +45,7 @@ export default function Mention({
     modelSpecs,
     assistantsMap,
     endpointsConfig,
+    getConversation,
     newConversation,
   });
 

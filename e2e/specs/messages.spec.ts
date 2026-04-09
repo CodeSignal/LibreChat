@@ -3,7 +3,7 @@ import type { Response, Page, BrowserContext } from '@playwright/test';
 
 const basePath = 'http://localhost:3080/c/';
 const initialUrl = `${basePath}new`;
-const endpoints = ['google', 'openAI', 'azureOpenAI', 'chatGPTBrowser', 'gptPlugins'];
+const endpoints = ['google', 'openAI', 'azureOpenAI'];
 const endpoint = endpoints[1];
 
 function isUUID(uuid: string) {
@@ -12,9 +12,7 @@ function isUUID(uuid: string) {
 }
 
 const waitForServerStream = async (response: Response) => {
-  const endpointCheck =
-    response.url().includes(`/api/ask/${endpoint}`) ||
-    response.url().includes(`/api/edit/${endpoint}`);
+  const endpointCheck = response.url().includes(`/api/agents`);
   return endpointCheck && response.status() === 200;
 };
 

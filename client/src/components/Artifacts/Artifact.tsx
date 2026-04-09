@@ -6,8 +6,8 @@ import { useLocation } from 'react-router-dom';
 import type { Pluggable } from 'unified';
 import type { Artifact } from '~/common';
 import { useMessageContext, useArtifactContext } from '~/Providers';
+import { logger, extractContent, isArtifactRoute } from '~/utils';
 import { artifactsState } from '~/store/artifacts';
-import { logger, extractContent } from '~/utils';
 import ArtifactButton from './ArtifactButton';
 
 export const artifactPlugin: Pluggable = () => {
@@ -40,7 +40,7 @@ const defaultType = 'unknown';
 const defaultIdentifier = 'lc-no-identifier';
 
 export function Artifact({
-  node,
+  node: _node,
   ...props
 }: Artifact & {
   children: React.ReactNode | { props: { children: React.ReactNode } };
@@ -88,14 +88,14 @@ export function Artifact({
         lastUpdateTime: now,
       };
 
-      if (!location.pathname.includes('/c/')) {
+      if (!isArtifactRoute(location.pathname)) {
         return setArtifact(currentArtifact);
       }
 
       setArtifacts((prevArtifacts) => {
         if (
           prevArtifacts?.[artifactKey] != null &&
-          prevArtifacts[artifactKey].content === content
+          prevArtifacts[artifactKey]?.content === content
         ) {
           return prevArtifacts;
         }
